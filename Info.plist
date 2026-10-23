@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDisplayName</key>
+	<string>Notchfall</string>
+	<key>CFBundleExecutable</key>
+	<string>Notchfall</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.stangudu.notchfall</string>
+	<key>CFBundleName</key>
+	<string>Notchfall</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Notchfall reads your calendar so it can drop an alert out of the notch before a meeting starts. Nothing leaves your Mac.</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>Notchfall reads your calendar so it can drop an alert out of the notch before a meeting starts. Nothing leaves your Mac.</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>Notchfall reads your reminders so it can alert you when one is due. It never changes them.</string>
+	<key>NSRemindersUsageDescription</key>
+	<string>Notchfall reads your reminders so it can alert you when one is due. It never changes them.</string>
+</dict>
+</plist>
