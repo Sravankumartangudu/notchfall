@@ -28,6 +28,9 @@ notch, springs open with a glowing rim and gives you a big **Join** button.
 | **☀️ Morning brief** | The first time you sit down at the Mac each morning, the island opens with *Good morning*: how many meetings you have today, the first one, reminders due, and the whole day on a timeline. It tidies itself away after 12 seconds. |
 | **🍅 Focus timer** | Menu → **🍅 Focus**: 25 or 50 minutes of focus with a tomato ring counting down beside the notch, then a "Focus session done" alert with **Start break** or **5 more min**. The break counts down in blue and calls you back. |
 | **⚡ Charging and 🎧 headphones** | Plug in the charger and the wings show ⚡ Charging and the battery filling to its level. Connect AirPods or other headphones and they show by name with a ✓. Three seconds, then gone. |
+| **🚗 Time to leave** | For a meeting at a real address (not a video link), Notchfall asks Apple Maps how long it takes to get there and drops a *Time to leave* alert with the travel time, the start time and a **Directions** button that opens Maps. Driving, walking or transit, or a fixed 15 or 30 minutes if you'd rather not share your location. |
+| **📂 File shelf and AirDrop** | Drag a file up to the notch and it opens into two drop zones: **Shelf** keeps it there for later, **AirDrop** sends it to a nearby device. Hover the notch to see the shelf under Up next, then drag files out wherever you need them. |
+| **🎤 Mute from anywhere** | **⌃⌥M** mutes the microphone itself, so every meeting app hears silence. The wings say *Muted*, the on-air light shows a struck-through mic, and if a call starts while you're muted you get *You're muted* before you start talking. It unmutes when the call ends. |
 | **Live countdown** | In the minutes before a meeting, a ring and the minutes left sit either side of the notch. The rim starts to glow in the last minute. |
 | **Up next on hover** | Move the pointer onto the notch and the island opens into your next four items (three under the player), each with its own join button. |
 | **Gets more urgent** | The rim's gradient turns faster as the start gets close and goes red once the meeting is live. The title shimmers, and the badge pulses. |
@@ -81,6 +84,36 @@ notch, springs open with a glowing rim and gives you a big **Join** button.
 <tr>
 <td align="center"><sub>⚡ Charger plugged in</sub></td>
 <td align="center"><sub>🎧 Headphones connected</sub></td>
+</tr>
+<tr>
+<td colspan="2"><img src="docs/screenshots/leave.jpg" alt="Time to leave alert: 17 min drive to Blue Bottle Coffee, with a Directions button"></td>
+</tr>
+<tr>
+<td colspan="2" align="center"><sub>🚗 Time to leave: Apple Maps travel time, one click to directions</sub></td>
+</tr>
+<tr>
+<td><img src="docs/screenshots/drop.jpg" alt="Drop zones under the notch: Shelf and AirDrop"></td>
+<td><img src="docs/screenshots/shelf.jpg" alt="The shelf with five files under the Up next list"></td>
+</tr>
+<tr>
+<td align="center"><sub>📂 Drag a file up to the notch</sub></td>
+<td align="center"><sub>Hover: the shelf under Up next</sub></td>
+</tr>
+<tr>
+<td><img src="docs/screenshots/stillmuted.jpg" alt="You're muted reminder beside the notch"></td>
+<td><img src="docs/screenshots/on-air-muted.jpg" alt="On air with a struck-through mic while muted"></td>
+</tr>
+<tr>
+<td align="center"><sub>🎤 A call starts while you're muted</sub></td>
+<td align="center"><sub>On air, muted with ⌃⌥M</sub></td>
+</tr>
+<tr>
+<td><img src="docs/screenshots/muted.jpg" alt="Muted toast"></td>
+<td><img src="docs/screenshots/leavepeek.jpg" alt="Leave-by countdown beside the notch"></td>
+</tr>
+<tr>
+<td align="center"><sub>⌃⌥M: Muted</sub></td>
+<td align="center"><sub>🚗 Minutes until you need to leave</sub></td>
 </tr>
 <tr>
 <td><img src="docs/screenshots/reminder.jpg" alt="Reminder alert"></td>
@@ -166,6 +199,10 @@ makes `build/Notchfall.dmg` and `build/Notchfall.zip`.
 | Control the music | Hover the notch: ⏮ ⏯ ⏭ on the player. |
 | Focus | Menu → **🍅 Focus** → 25 or 50 minutes. While it runs, the same menu shows the time left, **Add 5 minutes** and **Stop the session**. |
 | Read the morning brief again | Menu → **✨ Preview an alert → Morning brief** shows how it looks; the real one comes once a day. |
+| Get directions | Click **Directions** on a *Time to leave* alert, or the 🗺 button on it in **Up next**. |
+| Park a file | Drag it up to the notch and drop it on **Shelf**. Hover the notch to get it back: drag it out, double-click to open, ✕ to take it off. Menu → **📂 Shelf** shows each file in Finder. |
+| AirDrop a file | Drag it up to the notch and drop it on **AirDrop**, or **AirDrop** on the shelf to send everything on it. |
+| Mute the mic | **⌃⌥M** in any app, or menu → **🎤 Mute microphone**. Press again to unmute. |
 | Check your camera | Click 🪞 on a meeting alert. **Back** returns to the alert; **Join** joins. |
 | Try the animation | Menu → **✨ Preview an alert** → any item, or **Drop a test alert** (⌘T). |
 
@@ -176,6 +213,7 @@ When alerts appear:
 | Meeting | at your lead time (2 min by default) | up to 5 min after it started |
 | Reminder | at your lead time | up to 1 hour late |
 | Quick timer, focus or break | when it ends | always, even after sleep |
+| Time to leave | travel time + 5 minutes before the meeting starts | up to 15 min late |
 | Morning brief | the first time you're at the Mac between 5:00 and noon, once a day | not shown if you only come back after noon |
 
 Only one alert shows at a time. The next one waits until you close the current one.
@@ -196,11 +234,14 @@ Everything is under **⚙ Settings** in the menu.
 | **Island → Pause music when a meeting alert drops** | On (default) / off |
 | **Island → Morning brief** | On (default) / off |
 | **Island → Charging and headphone toasts** | On (default) / off |
+| **Island → Catch files dragged to the notch** | On (default) / off: the shelf and AirDrop drop zones |
 | **Island → Glow colours** | Aurora, Neon, Ember, Ice, Mono |
 | **Island → Show on** | The built-in screen with the notch, or the main screen |
 | **Sound → Alert sound** | Off, Glass, Hero, Ping, Pop, Purr, Submarine, Tink |
 | **Sound → Voice announcement** | Speaks "Design Review starts in 2 minutes." |
 | **What to alert for** | Only meetings with video links; Include Apple Reminders |
+| **What to alert for → Time to leave** | Off; Travel time from Apple Maps (default); 15 or 30 min before (no location needed). Driving (default), Walking or Transit. |
+| **Microphone** | ⌃⌥M mutes the microphone in any app; Remind me when a call starts muted; Unmute when the call ends (all on by default) |
 | **App → Appearance** | System, Light or Dark for the menu and dialogs. The island is always dark. |
 | **App → Launch at login** | On / off |
 
@@ -209,8 +250,8 @@ Everything is under **⚙ Settings** in the menu.
 ## Privacy
 
 Notchfall reads your calendars, and reminders if you turn them on, **on your Mac only**. It has
-no server, no account, no analytics and no network access of its own (one exception below, for
-Spotify covers). Clicking **Join** opens the meeting link in your browser or meeting app.
+no server, no account, no analytics and no network access of its own (two exceptions below: Spotify
+covers, and Apple Maps travel times for meetings with an address). Clicking **Join** opens the meeting link in your browser or meeting app.
 
 - **Camera check** asks for camera access the first time you use it. The picture is only shown in
   the island; it's never recorded or saved, and the camera turns off when you close it.
@@ -223,6 +264,15 @@ Spotify covers). Clicking **Join** opens the meeting link in your browser or mee
   server.
 - **Charging and headphones** are read from macOS's own power and Bluetooth audio state on your Mac.
   No permission, nothing leaves the Mac.
+- **Time to leave** only looks up meetings that have a real address. It asks for location access the
+  first time there's one coming up, then sends your rough location and the meeting's address to Apple
+  Maps for the travel time (as the Maps app would). Your location isn't stored. Pick **15 or 30 min
+  before** to skip location entirely.
+- **File shelf** keeps only the paths of the files you drop, on your Mac. To notice a file drag it
+  checks *that* a file is being dragged, never which one, until you drop it. AirDrop is macOS's own.
+- **Mute** flips the microphone's own mute switch (or turns its input volume to zero and back). It
+  never listens to the microphone, and **⌃⌥M** uses macOS's hot-key API, so it needs no
+  Accessibility or Input Monitoring permission.
 - **Morning brief** uses the same calendar and reminders Notchfall already reads. To know you're at
   the Mac it only checks that the screen is awake and unlocked and that a key or the mouse was used
   in the last minute; it never sees *what* you typed.
@@ -259,6 +309,23 @@ System Settings → Privacy & Security → Camera, and turn Notchfall on.
 Notchfall needs permission to control the player: System Settings → Privacy & Security →
 Automation → Notchfall, and turn on **Music** and/or **Spotify**. Also check Settings → Island →
 **Show Now Playing**. Other players (browsers, Podcasts) aren't supported.
+
+**Time to leave says "Allowing 15 min" instead of a real drive time.**
+Notchfall couldn't get your location or find the address. Allow it in System Settings → Privacy &
+Security → Location Services → Notchfall (the **Time to leave** menu has a shortcut), and check the
+meeting's location is a full street address.
+
+**⌃⌥M does nothing.**
+Another app may already use ⌃⌥M; macOS gives a shortcut to whichever app took it first. Check that
+**⌃⌥M mutes the microphone in any app** is on, and quit the other app or change its shortcut.
+
+**Muting turns the mic's input volume to zero.**
+Some microphones have no mute switch, so Notchfall turns the input volume down instead, and puts it
+back when you unmute. If you quit Notchfall while muted, reset it in System Settings → Sound → Input.
+
+**Dragging a file to the notch doesn't open the drop zones.**
+Check **Catch files dragged to the notch** is on, and drag right up under the notch. You can also
+drop onto the shelf when the island is open on hover.
 
 **I also use T-Minus.**
 Both apps would alert for the same meeting. Keep one running, or set one to **Only meetings

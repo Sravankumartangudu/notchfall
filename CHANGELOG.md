@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.4.0 (2026-10-24)
+
+- **🚗 Time to leave.** Meetings at a real address (not a video link) get a *Time to leave* alert
+  when it's time to go: travel time from Apple Maps plus 5 minutes, the start time, the address
+  and a **Directions** button that opens Maps. A *LEAVE NOW* countdown sits beside the notch
+  before it. Driving, walking or transit, or a fixed 15 or 30 minutes with no location at all.
+  Location is only asked for once a meeting with an address comes up.
+- **📂 File shelf and AirDrop.** Drag a file up to the notch and two drop zones open: **Shelf**
+  keeps it for later, **AirDrop** sends it to a nearby device. Hover the notch to see the shelf
+  under **Up next**: drag files back out, double-click to open, ✕ to take one off, or AirDrop
+  them all. Menu → **📂 Shelf** shows each file in Finder. Up to 12 files; only their paths are kept.
+- **🎤 Mute from anywhere.** **⌃⌥M** (or menu → **🎤 Mute microphone**) mutes the microphone
+  itself, so every meeting app hears silence. The wings say *Muted* / *Mic on*, the on-air light
+  shows a struck-through mic, a call that starts while you're muted gets *You're muted*, and the
+  mic comes back on when the call ends. No Accessibility permission needed.
+- New settings: Island → **Catch files dragged to the notch**; What to alert for → **Time to
+  leave**; and a **Microphone** section.
+- **✨ Preview an alert** gains Time to leave, Leave-by countdown, Muted, You're muted, On air
+  (muted), Drop a file and Shelf.
+
 ## 1.3.0 (2026-10-24)
 
 - **☀️ Morning brief.** Once a day, the first time you're at the Mac between 5:00 and noon, the
@@ -14,6 +34,7 @@
   minute per device. Settings → Island → **Charging and headphone toasts**.
 - **✨ Preview an alert** gains Morning brief, Charging, Headphones connected, Focus session and
   Focus session done.
+
 ## 1.2.0 (2026-10-24)
 
 - **🎵 Now Playing.** While Apple Music or Spotify plays, the album cover sits in the left wing and

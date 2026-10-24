@@ -119,7 +119,11 @@ struct OnAirContent: View {
             Wings(m: m) {
                 HStack(spacing: 7) {
                     LiveDot(color: red)
-                    if air.mic {
+                    if air.muted {
+                        // Muted with ⌃⌥M: the mic glyph is struck through, so it's obvious nobody hears you.
+                        Image(systemName: "mic.slash.fill").font(.system(size: 11, weight: .bold)).foregroundStyle(rgb(1, 0.6, 0.35))
+                            .transition(.scale.combined(with: .opacity))
+                    } else if air.mic {
                         Image(systemName: "mic.fill").font(.system(size: 11, weight: .bold)).foregroundStyle(red)
                             .transition(.scale.combined(with: .opacity))
                     }
@@ -129,6 +133,7 @@ struct OnAirContent: View {
                     }
                 }
                 .animation(.spring(response: 0.35, dampingFraction: 0.7), value: air.mic)
+                .animation(.spring(response: 0.35, dampingFraction: 0.7), value: air.muted)
                 .animation(.spring(response: 0.35, dampingFraction: 0.7), value: air.camera)
                 .reveal(on)
             } right: {

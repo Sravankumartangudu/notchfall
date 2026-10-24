@@ -72,6 +72,37 @@ final class Settings {
         get { d.object(forKey: "toasts") as? Bool ?? true }
         set { d.set(newValue, forKey: "toasts") }
     }
+    /// 🚗 Leave-by alerts for meetings at a physical address: "maps" (Apple Maps travel time), "fixed15",
+    /// "fixed30" (that many minutes, no location needed) or "off".
+    var leaveBy: String {
+        get { d.string(forKey: "leaveBy") ?? "maps" }
+        set { d.set(newValue, forKey: "leaveBy") }
+    }
+    /// "driving", "walking" or "transit".
+    var transport: String {
+        get { d.string(forKey: "transport") ?? "driving" }
+        set { d.set(newValue, forKey: "transport") }
+    }
+    /// 🎤 ⌃⌥M mutes and unmutes the microphone from any app.
+    var muteHotkey: Bool {
+        get { d.object(forKey: "muteHotkey") as? Bool ?? true }
+        set { d.set(newValue, forKey: "muteHotkey") }
+    }
+    /// "You're muted" when a call starts with the mic muted.
+    var muteReminder: Bool {
+        get { d.object(forKey: "muteReminder") as? Bool ?? true }
+        set { d.set(newValue, forKey: "muteReminder") }
+    }
+    /// Turn the mic back on when a call you muted it in ends.
+    var unmuteAfterCall: Bool {
+        get { d.object(forKey: "unmuteAfterCall") as? Bool ?? true }
+        set { d.set(newValue, forKey: "unmuteAfterCall") }
+    }
+    /// 📂 Dragging files up to the notch opens the shelf and AirDrop drop zones.
+    var shelf: Bool {
+        get { d.object(forKey: "shelf") as? Bool ?? true }
+        set { d.set(newValue, forKey: "shelf") }
+    }
     /// "notch" (built-in notch screen, else the main screen) or "primary" (the screen with the menu bar).
     var screen: String {
         get { d.string(forKey: "screen") ?? "notch" }
@@ -125,14 +156,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var lastToast: (Toast.Kind, Date)?
     private var briefToken = 0
     private var demoFocus: Meeting?
+    private let travel = Travel()
+    private let shelf = Shelf()
+    private var hotKey: HotKey?
+    private var micMuted = false
+    private var mutedByUs = false          // muted with ⌃⌥M or the menu (so we may unmute after the call)
+    private var forDocs: Bool { CommandLine.arguments.contains { $0.hasPrefix("--demo") } }
 
     private static let sounds = ["Glass", "Hero", "Ping", "Pop", "Purr", "Submarine", "Tink"]
 
     private var relevant: [Meeting] {
         // The video-link filter only applies to calendar events; reminders and timers always count.
         let events = settings.videoOnly ? meetings.filter { $0.link != nil } : meetings
-        let extras = (settings.reminders ? reminders : []) + timers.meetings
+        let extras = (settings.reminders ? reminders : []) + timers.meetings + leaveAlerts(events)
         return (events + extras + [demo].compactMap { $0 }).sorted { $0.start < $1.start }
+    }
+
+    /// 🚗 A "time to leave" alert for each meeting at a physical address: travel time plus 5 minutes
+    /// before it starts. Until Apple Maps answers (or without location access) it assumes 15 minutes.
+    private func leaveAlerts(_ events: [Meeting]) -> [Meeting] {
+        guard settings.leaveBy != "off" else { return [] }
+        let now = Date(), by = settings.transport
+        return events.compactMap { m in
+            guard m.kind == .meeting, let place = m.location, m.start > now, m.start.timeIntervalSince(now) < 12 * 3600
+            else { return nil }
+            let fixed = settings.leaveBy == "fixed30" ? 30 : settings.leaveBy == "fixed15" ? 15 : nil
+            let eta = fixed == nil ? travel.minutes(to: place, by: by) : nil
+            let mins = fixed ?? eta ?? 15
+            var a = Meeting(id: "leave-\(m.id)", title: m.title, start: m.start.addingTimeInterval(-Double(mins + 5) * 60),
+                            end: m.start, link: Travel.directions(to: place, by: by), calendar: m.calendar,
+                            attendees: m.attendees, kind: .leave, minutes: mins, location: place, transport: by)
+            a.estimated = eta == nil
+            return a
+        }
+    }
+
+    /// Asks Apple Maps for travel times to the addresses of the next few hours' meetings.
+    private func updateTravel() {
+        guard settings.leaveBy == "maps", !forDocs else { return }
+        let now = Date()
+        let places = meetings.filter { $0.start > now && $0.start.timeIntervalSince(now) < 4 * 3600 }.compactMap(\.location)
+        travel.update(places, by: settings.transport)
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -149,6 +213,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Calendar.app"))
             self?.closeBrief()
         }
+        island.model.shelf = shelf.items
+        island.model.onShelfDrop = { [weak self] urls in
+            guard let self else { return }
+            self.shelf.add(urls)
+            self.island.model.shelf = self.shelf.items
+            self.showToast(.shelf(self.shelf.items.count), force: true)
+        }
+        island.model.onShelfRemove = { [weak self] url in
+            guard let self else { return }
+            if let url { self.shelf.remove(url) } else { self.shelf.clear() }
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) { self.island.model.shelf = self.shelf.items }
+        }
+        travel.onChange = { [weak self] in self?.updateTravel(); self?.updateIsland() }
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.image = Self.menuIcon()
@@ -192,7 +269,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             peripherals.onCharging = { [weak self] pct in self?.showToast(.charging(pct)) }
             peripherals.onHeadphones = { [weak self] name in self?.showToast(.headphones(name)) }
             peripherals.start()
+            micMuted = Mic.muted
+            applyMuteHotkey()
         }
+    }
+
+    private func applyMuteHotkey() {
+        hotKey = settings.muteHotkey ? HotKey.muteShortcut { [weak self] in self?.toggleMute() } : nil
     }
 
     private func applyIslandSettings() {
@@ -201,6 +284,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         island.model.peekWindow = Double(max(1, settings.peekMinutes) * 60)
         island.model.lead = Double(max(1, settings.leadMinutes) * 60)
         island.model.glow = settings.glow
+        island.catchDrops = settings.shelf
         if island.screenChoice != settings.screen {
             island.screenChoice = settings.screen
             island.place()
@@ -213,6 +297,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func refresh() {
         meetings = cal.upcoming()
         lastRefresh = Date()
+        updateTravel()
+        shelf.prune()
+        if shelf.items != island.model.shelf, island.model.shelf != Shelf.demo { island.model.shelf = shelf.items }
         if settings.reminders {
             cal.upcomingReminders { [weak self] list in
                 self?.reminders = list
@@ -226,6 +313,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if Date().timeIntervalSince(lastRefresh) > 60 { refresh() }
         updateTitle()
         updateIsland()
+        if !forDocs { micMuted = Mic.muted }
+        if !micMuted { mutedByUs = false }
         updateOnAir()
         resumeAfterCallIfDone()
         maybeBrief()
@@ -242,6 +331,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             switch m.kind {
             case .meeting: grace = 300
             case .reminder: grace = 3600
+            case .leave: grace = 900
             case .timer, .focus: grace = .infinity
             }
             if let until = snoozed[m.id] {
@@ -324,7 +414,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         let air = OnAir(meeting: meeting, since: model.onAir?.since ?? since,
                         mic: mic || (model.onAir?.mic ?? false) && deviceOffSince != nil,
-                        camera: cam, next: next)
+                        camera: cam, muted: micMuted, next: next)
         setOnAir(air)
     }
 
@@ -332,8 +422,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let model = island.model
         guard air != model.onAir else { return }
         let appearing = (air == nil) != (model.onAir == nil)
+        let endedReal = air == nil && !(model.onAir?.meeting?.id.hasPrefix("demo-") ?? false)
         withAnimation(.spring(response: 0.4, dampingFraction: 0.75)) { model.onAir = air }
         if appearing { island.resolve() }
+        guard appearing else { return }
+        if let a = air, a.muted, settings.muteReminder {
+            // The call just started and nobody can hear you: say so before you start talking.
+            showToast(.stillMuted, force: true)
+        } else if air == nil, endedReal, mutedByUs, micMuted, settings.unmuteAfterCall, Mic.setMuted(false) {
+            micMuted = false
+            mutedByUs = false
+            showToast(.mic(muted: false), force: true)
+        }
+    }
+
+    /// ⌃⌥M (or the menu): mute or unmute the microphone for every app.
+    @objc private func toggleMute() {
+        let mute = !Mic.muted
+        guard Mic.setMuted(mute) else { return NSSound.beep() }
+        micMuted = mute
+        mutedByUs = mute
+        showToast(.mic(muted: mute), force: true)
+        updateOnAir()
     }
 
     // MARK: - Now Playing
@@ -407,6 +517,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             case .reminder: line = "Reminder. \(m.title) " + (mins <= 0 ? "is due now." : "is due in \(mins) minute\(plural).")
             case .timer: line = "Time's up. \(m.title)."
             case .focus: line = m.isBreak ? "Break's over. Ready to focus?" : "Focus session done. Time for a break."
+            case .leave: line = "Time to leave for \(m.title). It's about \(m.minutes) minutes away."
             }
             synth.speak(AVSpeechUtterance(string: line))
         }
@@ -518,9 +629,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             case .timer: tag = "  ⏱"
             case .reminder: tag = "  ☑"
             case .focus: tag = "  🍅"
+            case .leave: tag = "  🚗 leave"
             case .meeting: tag = m.link == nil ? "" : "  → \(m.provider)"
             }
-            let mi = item("\(when)   \(truncate(m.title, 36))\(tag)", m.link == nil ? nil : #selector(joinFromMenu(_:)))
+            let mi = item("\(when)   \(m.kind == .leave ? "Leave for " : "")\(truncate(m.title, 36))\(tag)",
+                          m.link == nil ? nil : #selector(joinFromMenu(_:)))
             mi.representedObject = m.link
             menu.addItem(mi)
         }
@@ -531,7 +644,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                              ("Timer alert", "-timer"), ("Live countdown", "-peek"), ("Up next list", "-list"),
                              ("Camera check", "-mirror"), ("On air (during a call)", "-onair"), ("Now Playing", "-music"),
                              ("Morning brief", "-brief"), ("Charging", "-charging"), ("Headphones connected", "-airpods"),
-                             ("Focus session", "-focus"), ("Focus session done", "-focusdone")] {
+                             ("Focus session", "-focus"), ("Focus session done", "-focusdone"),
+                             ("Time to leave", "-leave"), ("Leave-by countdown", "-leavepeek"), ("Mic muted", "-muted"),
+                             ("On a call, muted", "-onair-muted"), ("Drop zones (drag a file up)", "-drop"), ("Shelf", "-shelf")] {
             let mi = item(label, #selector(previewFromMenu(_:)))
             mi.representedObject = arg
             preview.addItem(mi)
@@ -575,6 +690,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         menu.addItem(submenu("🍅 Focus", focusMenu))
 
+        let shelfMenu = NSMenu()
+        if shelf.items.isEmpty {
+            shelfMenu.addItem(disabled("Drag files up to the notch to park them here"))
+        } else {
+            for url in shelf.items {
+                let mi = item("Show “\(truncate(url.lastPathComponent, 32))” in Finder", #selector(revealShelfItem(_:)))
+                mi.representedObject = url
+                shelfMenu.addItem(mi)
+            }
+            shelfMenu.addItem(.separator())
+            shelfMenu.addItem(item("AirDrop everything…", #selector(airDropShelf)))
+            shelfMenu.addItem(item("Clear the shelf", #selector(clearShelf)))
+        }
+        menu.addItem(submenu(shelf.items.isEmpty ? "📂 Shelf" : "📂 Shelf (\(shelf.items.count))", shelfMenu))
+
+        let muteItem = item(micMuted ? "🎤 Unmute microphone" : "🎤 Mute microphone", #selector(toggleMute))
+        if settings.muteHotkey {
+            muteItem.keyEquivalent = "m"
+            muteItem.keyEquivalentModifierMask = [.control, .option]
+        }
+        menu.addItem(muteItem)
+
         // All preferences live under one Settings submenu, grouped by what they affect.
         let prefs = NSMenu()
         prefs.addItem(sectionHeader("Island"))
@@ -608,6 +745,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         prefs.addItem(toggle("Pause music when a meeting alert drops", settings.pauseForAlerts, #selector(togglePauseForAlerts)))
         prefs.addItem(toggle("Morning brief", settings.brief, #selector(toggleBrief)))
         prefs.addItem(toggle("Charging and headphone toasts", settings.toasts, #selector(toggleToasts)))
+        prefs.addItem(toggle("Catch files dragged to the notch (shelf, AirDrop)", settings.shelf, #selector(toggleShelf)))
 
         let glowMenu = NSMenu()
         for g in Glow.allCases {
@@ -643,6 +781,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         prefs.addItem(sectionHeader("What to alert for"))
         prefs.addItem(toggle("Only meetings with video links", settings.videoOnly, #selector(toggleVideoOnly)))
         prefs.addItem(toggle("Include Apple Reminders", settings.reminders, #selector(toggleReminders)))
+        let leaveMenu = NSMenu()
+        for (raw, label) in [("off", "Off"), ("maps", "Travel time from Apple Maps"),
+                             ("fixed15", "15 min before (no location needed)"), ("fixed30", "30 min before (no location needed)")] {
+            let mi = item(label, #selector(setLeaveBy(_:)))
+            mi.representedObject = raw
+            mi.state = settings.leaveBy == raw ? .on : .off
+            leaveMenu.addItem(mi)
+        }
+        leaveMenu.addItem(.separator())
+        for (raw, label) in [("driving", "🚗 Driving"), ("walking", "🚶 Walking"), ("transit", "🚆 Transit")] {
+            let mi = item(label, #selector(setTransport(_:)))
+            mi.representedObject = raw
+            mi.state = settings.transport == raw ? .on : .off
+            leaveMenu.addItem(mi)
+        }
+        if settings.leaveBy == "maps", travel.denied {
+            leaveMenu.addItem(.separator())
+            leaveMenu.addItem(item("⚠ Location access denied — open Privacy settings", #selector(openLocationPrivacy)))
+        }
+        prefs.addItem(submenu("Time to leave (meetings with an address)", leaveMenu))
+
+        prefs.addItem(.separator())
+        prefs.addItem(sectionHeader("Microphone"))
+        prefs.addItem(toggle("⌃⌥M mutes the microphone in any app", settings.muteHotkey, #selector(toggleMuteHotkey)))
+        prefs.addItem(toggle("Remind me when a call starts muted", settings.muteReminder, #selector(toggleMuteReminder)))
+        prefs.addItem(toggle("Unmute when the call ends", settings.unmuteAfterCall, #selector(toggleUnmuteAfterCall)))
 
         prefs.addItem(.separator())
         prefs.addItem(sectionHeader("App"))
@@ -715,7 +879,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Don't replace a real alert: it would close without its Join/Snooze/Dismiss handling.
         guard !island.isShowingAlert else { return }
         // Launch-flag previews are for screenshots, so they never turn the real camera on.
-        let forDocs = CommandLine.arguments.contains { $0.hasPrefix("--demo") }
         switch which {
         case "-tour":
             // The whole life of an alert in ~19 s: music playing, the alert drops out of the notch (and
@@ -734,11 +897,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
                     guard self.island.model.alert?.id == m.id else { return }
                     self.handle(.dismiss, for: m)
-                    self.island.model.fakeCamera = forDocs
+                    self.island.model.fakeCamera = self.forDocs
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { self.runDemo("-onair-short") }
                 }
             }
-        case "-onair", "-onair-short":
+        case "-onair", "-onair-short", "-onair-muted":
             let short = which == "-onair-short"
             let now = Date()
             let m = Meeting.demo(startingIn: -25 * 60 - 30)
@@ -746,7 +909,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                              calendar: m.calendar, attendees: m.attendees, people: m.people)
             let next = Meeting(id: "demo-next", title: "Sprint Planning", start: mt.end, end: mt.end.addingTimeInterval(3600),
                                link: URL(string: "https://zoom.us/j/1"), calendar: "Preview", attendees: 9)
-            demoOnAir = (OnAir(meeting: mt, since: mt.start, mic: true, camera: true, next: next),
+            demoOnAir = (OnAir(meeting: mt, since: mt.start, mic: true, camera: true, muted: which == "-onair-muted", next: next),
                          now.addingTimeInterval(short ? 3.6 : 20))
             updateOnAir()
             if short {
@@ -820,6 +983,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             demo = m
             alerted.insert(m.id)
             present(m)
+        case "-leave":
+            let m = Meeting.demo(startingIn: -1, kind: .leave)
+            demo = m
+            alerted.insert(m.id)
+            present(m)
+        case "-leavepeek":
+            demo = Meeting.demo(startingIn: 6 * 60 + 24, kind: .leave)
+            alerted.insert(demo!.id)
+            updateIsland()
+            let id = demo!.id
+            DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak self] in
+                if self?.demo?.id == id { self?.demo = nil; self?.updateIsland() }
+            }
+        case "-muted":
+            showToast(.mic(muted: true), force: true)
+        case "-drop":
+            island.model.shelf = Shelf.demo
+            island.showDropPreview(for: forDocs ? 14 : 6, target: "shelf")
+            DispatchQueue.main.asyncAfter(deadline: .now() + (forDocs ? 14 : 6)) { [weak self] in
+                guard let self else { return }
+                self.island.model.shelf = self.shelf.items
+            }
+        case "-shelf":
+            island.model.shelf = Shelf.demo
+            demoAgenda = Array(Meeting.demoAgenda().prefix(2))
+            updateIsland()
+            island.showListPreview(for: 12) { [weak self] in
+                guard let self else { return }
+                self.demoAgenda = nil
+                self.island.model.shelf = self.shelf.items
+                self.updateIsland()
+            }
         case "-list":
             demoAgenda = Meeting.demoAgenda()
             updateIsland()
@@ -951,6 +1146,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func togglePauseForAlerts() { settings.pauseForAlerts.toggle() }
     @objc private func toggleBrief() { settings.brief.toggle() }
     @objc private func toggleToasts() { settings.toasts.toggle() }
+    @objc private func toggleShelf() { settings.shelf.toggle(); applyIslandSettings() }
+    @objc private func toggleMuteHotkey() { settings.muteHotkey.toggle(); applyMuteHotkey() }
+    @objc private func toggleMuteReminder() { settings.muteReminder.toggle() }
+    @objc private func toggleUnmuteAfterCall() { settings.unmuteAfterCall.toggle() }
+
+    @objc private func setLeaveBy(_ sender: NSMenuItem) {
+        if let raw = sender.representedObject as? String { settings.leaveBy = raw }
+        updateTravel()
+        updateIsland()
+    }
+
+    @objc private func setTransport(_ sender: NSMenuItem) {
+        if let raw = sender.representedObject as? String { settings.transport = raw }
+        updateTravel()
+        updateIsland()
+    }
+
+    @objc private func revealShelfItem(_ sender: NSMenuItem) {
+        if let url = sender.representedObject as? URL { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+    }
+
+    @objc private func airDropShelf() { Shelf.airDrop(shelf.items) }
+
+    @objc private func clearShelf() {
+        shelf.clear()
+        island.model.shelf = []
+    }
+
+    @objc private func openLocationPrivacy() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_LocationServices") {
+            NSWorkspace.shared.open(url)
+        }
+    }
 
     @objc private func startFocus(_ sender: NSMenuItem) {
         timers.startFocus("focus", focus: sender.tag / 100, rest: sender.tag % 100)

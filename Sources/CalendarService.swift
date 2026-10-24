@@ -11,9 +11,12 @@ struct Meeting: Identifiable, Equatable {
     let attendees: Int
     var people: [String] = []
     var kind: Kind = .meeting
-    var minutes = 0                 // focus sessions: how long this stretch is
+    var minutes = 0                 // focus sessions: how long this stretch is; leave-by: travel minutes
+    var location: String? = nil     // a physical address (never a video link)
+    var transport = "driving"       // leave-by alerts: "driving", "walking" or "transit"
+    var estimated = false           // leave-by alerts: a fixed buffer, not a route from Apple Maps
 
-    enum Kind { case meeting, reminder, timer, focus }
+    enum Kind { case meeting, reminder, timer, focus, leave }
 
     /// A focus session alternates focus and break stretches; `calendar` says which one this is.
     var isBreak: Bool { kind == .focus && calendar == "Break" }
@@ -22,6 +25,7 @@ struct Meeting: Identifiable, Equatable {
         if kind == .reminder { return "Reminder" }
         if kind == .timer { return "Timer" }
         if kind == .focus { return isBreak ? "Break" : "Focus" }
+        if kind == .leave { return "Time to leave" }
         guard let host = link?.host else { return "Calendar" }
         if host.contains("meet.google") { return "Google Meet" }
         if host.contains("zoom") { return "Zoom" }
@@ -35,6 +39,7 @@ struct Meeting: Identifiable, Equatable {
         case .reminder: return "checklist"
         case .timer: return "timer"
         case .focus: return isBreak ? "cup.and.saucer.fill" : "brain.head.profile"
+        case .leave: return transport == "walking" ? "figure.walk" : transport == "transit" ? "tram.fill" : "car.fill"
         case .meeting: return link == nil ? "calendar" : "video.fill"
         }
     }
@@ -48,6 +53,10 @@ struct Meeting: Identifiable, Equatable {
             return isBreak ? "\(minutes)-min break is over. Ready for the next round?"
                            : "\(minutes) minutes of focus, done at \(f.string(from: start)). Time to stretch."
         case .reminder: return "Due \(f.string(from: start))  ·  \(calendar)"
+        case .leave:
+            let how = transport == "walking" ? "walk" : transport == "transit" ? "by transit" : "drive"
+            let trip = estimated ? "Allowing \(minutes) min to get there" : "\(minutes) min \(how)"
+            return "\(trip)  ·  starts \(f.string(from: end))  ·  \(location ?? calendar)"
         case .meeting:
             let crew = attendees > 0 ? "\(attendees) \(attendees == 1 ? "person" : "people")" : "Just you"
             return "\(f.string(from: start)) – \(f.string(from: end))  ·  \(calendar)  ·  \(crew)"
@@ -64,6 +73,11 @@ struct Meeting: Identifiable, Equatable {
             return Meeting(id: "demo-\(UUID().uuidString)", title: "Focus session done", start: Date().addingTimeInterval(seconds),
                            end: Date().addingTimeInterval(seconds + 300), link: nil, calendar: "Focus",
                            attendees: 0, kind: .focus, minutes: 25)
+        case .leave:
+            let place = "Blue Bottle Coffee, 66 Mint St"
+            return Meeting(id: "demo-\(UUID().uuidString)", title: "Coffee with Grace", start: Date().addingTimeInterval(seconds),
+                           end: Date().addingTimeInterval(seconds + 22 * 60), link: Travel.directions(to: place, by: "driving"),
+                           calendar: "Preview", attendees: 2, kind: .leave, minutes: 17, location: place)
         case .timer:
             return Meeting(id: "demo-\(UUID().uuidString)", title: "Stretch break", start: Date().addingTimeInterval(seconds),
                            end: Date().addingTimeInterval(seconds + 300), link: nil, calendar: "Quick timer",
@@ -97,6 +111,15 @@ struct Meeting: Identifiable, Equatable {
 }
 
 enum LinkFinder {
+    /// The event's location if it's somewhere you'd travel to: not a video link, dial-in or "Online".
+    static func place(_ location: String?) -> String? {
+        guard let loc = location?.trimmingCharacters(in: .whitespacesAndNewlines), loc.count >= 3 else { return nil }
+        let l = loc.lowercased()
+        let virtual = ["http", "www.", "zoom", "teams", "meet.google", "google meet", "webex", "skype", "slack", "huddle",
+                       "online", "virtual", "remote", "call", "phone", "dial", "tbd", "n/a"]
+        return virtual.contains { l.contains($0) } ? nil : loc
+    }
+
     private static let patterns = [
         #"https://meet\.google\.com/[a-z]{3,4}-[a-z]{4}-[a-z]{3,4}"#,
         #"https://[\w.-]*zoom\.us/j/[^\s<>"]+"#,
@@ -182,7 +205,8 @@ final class CalendarService {
                            attendees: e.attendees?.count ?? 0,
                            people: (e.attendees ?? []).map { p in
                                p.name ?? p.url.absoluteString.replacingOccurrences(of: "mailto:", with: "")
-                           })
+                           },
+                           location: LinkFinder.place(e.location))
         }
         .sorted { $0.start < $1.start }
     }

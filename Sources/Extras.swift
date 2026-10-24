@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// ⚡ Charging / 🎧 headphones connected: a few seconds in the wings, then gone.
+/// ⚡ Charging, 🎧 headphones connected, 🎤 mic muted, 📂 added to the shelf: a few seconds in the wings, then gone.
 struct ToastContent: View {
     @ObservedObject var m: IslandModel
     let toast: Toast
@@ -25,6 +25,25 @@ struct ToastContent: View {
                     .foregroundStyle(.white)
                     .symbolEffect(.bounce, value: on)
                     .reveal(on)
+            case .mic(let muted):
+                Image(systemName: muted ? "mic.slash.fill" : "mic.fill")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(muted ? Self.red : Self.green)
+                    .symbolEffect(.bounce, value: on)
+                    .reveal(on)
+            case .stillMuted:
+                HStack(spacing: 6) {
+                    LiveDot(color: Self.red)
+                    Image(systemName: "mic.slash.fill").font(.system(size: 13, weight: .bold)).foregroundStyle(Self.red)
+                        .symbolEffect(.pulse, options: .repeating)
+                }
+                .reveal(on)
+            case .shelf:
+                Image(systemName: "tray.and.arrow.down.fill")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(rgb(1, 0.76, 0.32))
+                    .symbolEffect(.bounce, value: on)
+                    .reveal(on)
             }
         } right: {
             switch toast.kind {
@@ -42,10 +61,27 @@ struct ToastContent: View {
                 }
                 .font(.system(size: 12, weight: .semibold, design: .rounded))
                 .reveal(on, 0.04)
+            case .mic(let muted):
+                Text(muted ? "Muted" : "Mic on")
+                    .font(.system(size: 12.5, weight: .bold, design: .rounded))
+                    .foregroundStyle(muted ? Self.red : .white.opacity(0.9))
+                    .reveal(on, 0.04)
+            case .stillMuted:
+                Text("You're muted")
+                    .font(.system(size: 12.5, weight: .bold, design: .rounded))
+                    .foregroundStyle(rgb(1, 0.6, 0.35))
+                    .reveal(on, 0.04)
+            case .shelf(let n):
+                Text("\(n) on the shelf")
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.9))
+                    .reveal(on, 0.04)
             }
         }
         .padding(.horizontal, inset)
     }
+
+    private static let red = rgb(1, 0.3, 0.32), green = rgb(0.3, 0.92, 0.45)
 }
 
 /// A battery outline whose green fill sweeps up to the current charge.

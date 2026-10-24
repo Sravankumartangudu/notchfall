@@ -15,9 +15,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.3.0</string>
+	<string>1.4.0</string>
 	<key>CFBundleVersion</key>
-	<string>4</string>
+	<string>5</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 	<key>LSUIElement</key>
@@ -25,13 +25,17 @@
 	<key>NSAppleEventsUsageDescription</key>
 	<string>Notchfall asks Music and Spotify what is playing so it can show the song beside the notch, and pauses it when a meeting alert drops. It only talks to them while they are already open.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
-	<string>Notchfall reads your calendar so it can drop an alert out of the notch before a meeting starts. Nothing leaves your Mac.</string>
+	<string>Notchfall reads your calendar so it can drop an alert out of the notch before a meeting starts. Only a meeting address goes to Apple Maps, for travel times; nothing else leaves your Mac.</string>
 	<key>NSCalendarsUsageDescription</key>
-	<string>Notchfall reads your calendar so it can drop an alert out of the notch before a meeting starts. Nothing leaves your Mac.</string>
+	<string>Notchfall reads your calendar so it can drop an alert out of the notch before a meeting starts. Only a meeting address goes to Apple Maps, for travel times; nothing else leaves your Mac.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Notchfall shows your camera inside the island when you click Camera check, so you can see yourself before joining a meeting. The picture never leaves your Mac and isn't recorded.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSLocationUsageDescription</key>
+	<string>Notchfall uses your rough location to ask Apple Maps how long it takes to get to a meeting that has an address, so it can tell you when to leave. Only meetings with an address are looked up, and your location is not stored.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Notchfall uses your rough location to ask Apple Maps how long it takes to get to a meeting that has an address, so it can tell you when to leave. Only meetings with an address are looked up, and your location is not stored.</string>
 	<key>NSRemindersFullAccessUsageDescription</key>
 	<string>Notchfall reads your reminders so it can alert you when one is due. It never changes them.</string>
 	<key>NSRemindersUsageDescription</key>

@@ -5,7 +5,7 @@ enum OverlayAction { case join, snooze, dismiss, next }
 
 /// A little notice that pops out of the notch for a few seconds.
 struct Toast: Equatable {
-    enum Kind: Equatable { case charging(Int), headphones(String) }
+    enum Kind: Equatable { case charging(Int), headphones(String), mic(muted: Bool), stillMuted, shelf(Int) }
     let kind: Kind
     let id = UUID()
 }
@@ -23,12 +23,13 @@ struct OnAir: Equatable {
     var since: Date
     var mic: Bool
     var camera: Bool
+    var muted = false         // the microphone itself is muted (⌃⌥M)
     var next: Meeting?        // a meeting that starts right as this one ends
 }
 
 /// Everything the island draws. The controller decides *what* to show; this model owns *how* it moves.
 final class IslandModel: ObservableObject {
-    enum Mode { case idle, bulge, peek, list, alert, mirror, onAir, music, toast, focus, brief }
+    enum Mode { case idle, bulge, peek, list, alert, mirror, onAir, music, toast, focus, brief, drop }
 
     @Published private(set) var mode: Mode = .idle
     @Published private(set) var visible = false
@@ -46,6 +47,9 @@ final class IslandModel: ObservableObject {
     @Published var toast: Toast?
     @Published var brief: Brief?
     @Published var focus: Meeting?     // the running focus or break stretch
+    @Published var shelf: [URL] = []
+    @Published var demoDropTarget: String?   // previews: light up a drop zone without a real drag
+    var draggingOut = false                  // a file is being dragged *off* the shelf
 
     var notch = CGSize(width: 190, height: 32)
     var hasNotch = true
@@ -58,6 +62,8 @@ final class IslandModel: ObservableObject {
     var onMusic: (NowPlaying.Command) -> Void = { _ in }
     var onBriefClose: () -> Void = {}
     var onOpenCalendar: () -> Void = {}
+    var onShelfDrop: ([URL]) -> Void = { _ in }
+    var onShelfRemove: (URL?) -> Void = { _ in }   // nil = clear the shelf
     let camera = CameraCheck()
 
     private var seq = 0
@@ -74,7 +80,8 @@ final class IslandModel: ObservableObject {
         case .list:
             let rows = agenda.isEmpty ? 1.6 : Double(min(agendaRows, agenda.count))
             let player: CGFloat = track == nil ? 0 : NowPlayingCard.height + 8
-            return Metrics(width: max(470, w + 2 * 145), height: h + 12 + player + CGFloat(rows) * 46 + 14, top: 16, bottom: 32)
+            let shelfH: CGFloat = shelf.isEmpty ? 0 : ShelfStrip.height + 8
+            return Metrics(width: max(470, w + 2 * 145), height: h + 12 + player + CGFloat(rows) * 46 + 14 + shelfH, top: 16, bottom: 32)
         case .alert:
             let people = (alert?.people.isEmpty ?? true) ? 0 : 18.0
             return Metrics(width: max(540, w + 2 * 172), height: h + 124 + people, top: 18, bottom: 38)
@@ -85,15 +92,20 @@ final class IslandModel: ObservableObject {
                              : Metrics(width: w + 2 * 92, height: h, top: 6, bottom: 12)
         case .music: return Metrics(width: w + 2 * 60, height: h, top: 6, bottom: 12)
         case .toast:
-            if case .headphones = toast?.kind { return Metrics(width: w + 2 * 112, height: h, top: 6, bottom: 12) }
+            switch toast?.kind {
+            case .headphones: return Metrics(width: w + 2 * 112, height: h, top: 6, bottom: 12)
+            case .stillMuted, .shelf: return Metrics(width: w + 2 * 104, height: h, top: 6, bottom: 12)
+            default: break
+            }
             return Metrics(width: w + 2 * 92, height: h, top: 6, bottom: 12)
         case .focus: return Metrics(width: w + 2 * 78, height: h, top: 6, bottom: 12)
         case .brief: return Metrics(width: max(560, w + 2 * 182), height: h + 166, top: 18, bottom: 38)
+        case .drop: return Metrics(width: max(520, w + 2 * 165), height: h + 10 + 76 + 16, top: 16, bottom: 32)
         }
     }
 
-    /// "Up next" shows four rows, or three when the player sits on top of them.
-    var agendaRows: Int { track == nil ? 4 : 3 }
+    /// "Up next" shows four rows, one fewer with the player on top and one fewer with the shelf below.
+    var agendaRows: Int { 4 - (track == nil ? 0 : 1) - (shelf.isEmpty ? 0 : 1) }
 
     /// The "Next: …" line under the on-air wings, in the last 10 minutes of a back-to-back meeting.
     var showsNext: Bool {
@@ -103,7 +115,7 @@ final class IslandModel: ObservableObject {
 
     /// Big cards get a faint inner rim and a drop shadow; the slim wings states don't.
     var isCard: Bool { Self.big.contains(mode) }
-    static let big: Set<Mode> = [.alert, .list, .mirror, .brief]
+    static let big: Set<Mode> = [.alert, .list, .mirror, .brief, .drop]
 
     var frameSize: CGSize {
         let m = metrics(mode)
@@ -225,6 +237,7 @@ struct IslandView: View {
             if let f = m.focus { FocusContent(m: m, item: f, inset: met.top + 10) }
         case .brief:
             if let b = m.brief { BriefContent(m: m, brief: b, inset: met.top + 20) }
+        case .drop: DropContent(m: m, inset: met.top + 16)
         case .idle, .bulge: EmptyView()
         }
     }
@@ -308,7 +321,7 @@ struct CountdownLabel: View {
             let red = rgb(1, 0.27, 0.3)
             HStack(spacing: 6) {
                 LiveDot(color: red)
-                Text(item.kind == .meeting ? "LIVE" : item.kind == .timer ? "TIME'S UP"
+                Text(item.kind == .meeting ? "LIVE" : item.kind == .timer ? "TIME'S UP" : item.kind == .leave ? "LEAVE NOW"
                      : item.kind == .focus ? (item.isBreak ? "BREAK'S OVER" : "DONE") : "DUE NOW")
                     .font(.system(size: 12, weight: .heavy, design: .rounded))
                     .kerning(0.8)
@@ -389,7 +402,8 @@ private struct AlertContent: View {
                     .buttonStyle(IslandButtonStyle(fill: tint, ink: .black, prominent: true))
                 } else if item.link != nil {
                     Button { m.onAction(.join, item) } label: {
-                        Label(item.kind == .meeting ? "Join \(item.provider)" : "Open link", systemImage: "video.fill")
+                        Label(item.kind == .meeting ? "Join \(item.provider)" : item.kind == .leave ? "Directions" : "Open link",
+                              systemImage: item.kind == .leave ? "map.fill" : "video.fill")
                     }
                     .buttonStyle(IslandButtonStyle(fill: tint, ink: .black, prominent: true))
                 } else {
@@ -492,6 +506,9 @@ private struct AgendaContent: View {
                 .padding(.top, 8)
             }
             Spacer(minLength: 0)
+            if !m.shelf.isEmpty {
+                ShelfStrip(m: m).padding(.bottom, 12).reveal(on, 0.2)
+            }
         }
         .padding(.horizontal, inset - 6)
     }
@@ -525,10 +542,10 @@ private struct AgendaRow: View {
                 .foregroundStyle(item.start <= m.now ? rgb(1, 0.3, 0.35) : tint)
             if item.link != nil {
                 Button { m.onJoin(item) } label: {
-                    Image(systemName: "video.fill").font(.system(size: 11, weight: .bold))
+                    Image(systemName: item.kind == .leave ? "map.fill" : "video.fill").font(.system(size: 11, weight: .bold))
                 }
                 .buttonStyle(IslandButtonStyle(fill: tint, ink: .black))
-                .help("Join \(item.provider)")
+                .help(item.kind == .leave ? "Directions in Maps" : "Join \(item.provider)")
             }
         }
         .padding(.horizontal, 8)
@@ -577,6 +594,12 @@ final class IslandController {
 
     var hoverEnabled = true
     var peekEnabled = true
+    var catchDrops = true
+    private(set) var dropping = false
+    private var demoDrop = false
+    private let dragBoard = NSPasteboard(name: .drag)
+    private lazy var dragBase = dragBoard.changeCount
+    private var dropCloseAt: Date?
     var screenChoice = "notch"
 
     var isShowingAlert: Bool { model.alert != nil }
@@ -662,8 +685,24 @@ final class IslandController {
         }
     }
 
+    /// Opens the drop zones as if a file were being dragged in, for the preview menu and screenshots.
+    func showDropPreview(for seconds: Double, target: String?) {
+        demoDrop = true
+        model.demoDropTarget = nil
+        resolve()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+            if self?.demoDrop == true { self?.model.demoDropTarget = target }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+            self?.demoDrop = false
+            self?.model.demoDropTarget = nil
+            self?.resolve()
+        }
+    }
+
     func resolve() {
         if model.alert != nil { model.morph(to: mirrorOpen ? .mirror : .alert) }
+        else if dropping || demoDrop { model.morph(to: .drop) }
         else if model.brief != nil { model.morph(to: .brief) }
         else if hovering || listPreview { model.morph(to: .list) }
         else if model.toast != nil { model.morph(to: .toast) }
@@ -687,7 +726,35 @@ final class IslandController {
         return hovering ? r.insetBy(dx: -8, dy: -10) : r
     }
 
+    /// A file drag from Finder (or anywhere) shows up as a new drag pasteboard holding file URLs while the
+    /// button is down. Only its types are looked at, never its contents. Bringing the drag up to the notch
+    /// opens the drop zones; letting go anywhere closes them again.
+    private func trackDrop() {
+        let down = NSEvent.pressedMouseButtons & 1 != 0
+        if !down {
+            dragBase = dragBoard.changeCount
+            model.draggingOut = false
+            // Give the drop itself a moment to land before the zones fold away.
+            if dropping {
+                if dropCloseAt == nil { dropCloseAt = Date().addingTimeInterval(0.35) }
+                if Date() >= dropCloseAt! { dropping = false; dropCloseAt = nil; resolve() }
+            }
+            return
+        }
+        dropCloseAt = nil
+        guard catchDrops, model.alert == nil, !model.draggingOut, dragBoard.changeCount != dragBase,
+              dragBoard.types?.contains(.fileURL) == true else { return }
+        let p = NSEvent.mouseLocation
+        let d = model.metrics(.drop), w = d.width + 2 * d.top
+        let zone = dropping
+            ? CGRect(x: center.x - w / 2, y: center.y - d.height, width: w, height: d.height).insetBy(dx: -50, dy: -50)
+            : CGRect(x: center.x - 230, y: center.y - 70, width: 460, height: 70)
+        let near = zone.contains(p)
+        if near != dropping { dropping = near; resolve() }
+    }
+
     private func trackMouse() {
+        trackDrop()
         let inside = hotRect.contains(NSEvent.mouseLocation)
         if panel.ignoresMouseEvents == inside { panel.ignoresMouseEvents = !inside }
 
