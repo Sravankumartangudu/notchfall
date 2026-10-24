@@ -14,7 +14,7 @@ struct OnAir: Equatable {
 
 /// Everything the island draws. The controller decides *what* to show; this model owns *how* it moves.
 final class IslandModel: ObservableObject {
-    enum Mode { case idle, bulge, peek, list, alert, mirror, onAir }
+    enum Mode { case idle, bulge, peek, list, alert, mirror, onAir, music }
 
     @Published private(set) var mode: Mode = .idle
     @Published private(set) var visible = false
@@ -28,6 +28,7 @@ final class IslandModel: ObservableObject {
     @Published var onAir: OnAir?
     @Published var cameraState: CameraCheck.State = .off
     @Published var fakeCamera = false
+    @Published var track: Track?
 
     var notch = CGSize(width: 190, height: 32)
     var hasNotch = true
@@ -37,6 +38,7 @@ final class IslandModel: ObservableObject {
     var onAction: (OverlayAction, Meeting) -> Void = { _, _ in }
     var onJoin: (Meeting) -> Void = { _ in }
     var onMirror: (Bool) -> Void = { _ in }
+    var onMusic: (NowPlaying.Command) -> Void = { _ in }
     let camera = CameraCheck()
 
     private var seq = 0
@@ -51,8 +53,9 @@ final class IslandModel: ObservableObject {
         case .bulge: return Metrics(width: w + 22, height: h + 12, top: 8, bottom: 16)
         case .peek: return Metrics(width: w + 2 * 74, height: h, top: 6, bottom: 12)
         case .list:
-            let rows = agenda.isEmpty ? 1.6 : Double(min(4, agenda.count))
-            return Metrics(width: max(470, w + 2 * 145), height: h + 12 + CGFloat(rows) * 46 + 14, top: 16, bottom: 32)
+            let rows = agenda.isEmpty ? 1.6 : Double(min(agendaRows, agenda.count))
+            let player: CGFloat = track == nil ? 0 : NowPlayingCard.height + 8
+            return Metrics(width: max(470, w + 2 * 145), height: h + 12 + player + CGFloat(rows) * 46 + 14, top: 16, bottom: 32)
         case .alert:
             let people = (alert?.people.isEmpty ?? true) ? 0 : 18.0
             return Metrics(width: max(540, w + 2 * 172), height: h + 124 + people, top: 18, bottom: 38)
@@ -61,8 +64,12 @@ final class IslandModel: ObservableObject {
         case .onAir:
             return showsNext ? Metrics(width: w + 2 * 104, height: h + 28, top: 8, bottom: 16)
                              : Metrics(width: w + 2 * 92, height: h, top: 6, bottom: 12)
+        case .music: return Metrics(width: w + 2 * 60, height: h, top: 6, bottom: 12)
         }
     }
+
+    /// "Up next" shows four rows, or three when the player sits on top of them.
+    var agendaRows: Int { track == nil ? 4 : 3 }
 
     /// The "Next: …" line under the on-air wings, in the last 10 minutes of a back-to-back meeting.
     var showsNext: Bool {
@@ -179,6 +186,8 @@ struct IslandView: View {
             if let a = m.alert { MirrorContent(m: m, item: a, inset: met.top + 20) }
         case .onAir:
             if let a = m.onAir { OnAirContent(m: m, air: a, inset: met.top + 10) }
+        case .music:
+            if let t = m.track { MusicContent(m: m, track: t, inset: met.top + 10) }
         case .idle, .bulge: EmptyView()
         }
     }
@@ -411,6 +420,10 @@ private struct AgendaContent: View {
             }
             .padding(.horizontal, 6)
 
+            if let t = m.track {
+                NowPlayingCard(m: m, track: t).padding(.top, 8).reveal(on, 0.04)
+            }
+
             if m.agenda.isEmpty {
                 HStack(spacing: 12) {
                     Image(systemName: "moon.stars.fill")
@@ -428,7 +441,7 @@ private struct AgendaContent: View {
                 .reveal(on, 0.06)
             } else {
                 VStack(spacing: 2) {
-                    ForEach(Array(m.agenda.prefix(4).enumerated()), id: \.element.id) { i, item in
+                    ForEach(Array(m.agenda.prefix(m.agendaRows).enumerated()), id: \.element.id) { i, item in
                         AgendaRow(m: m, item: item).reveal(on, 0.05 + Double(i) * 0.045)
                     }
                 }
@@ -610,6 +623,7 @@ final class IslandController {
         else if hovering || listPreview { model.morph(to: .list) }
         else if model.onAir != nil { model.morph(to: .onAir) }
         else if peekEnabled, model.peek != nil { model.morph(to: .peek) }
+        else if model.track?.playing == true { model.morph(to: .music) }
         else { model.morph(to: .idle) }
     }
 

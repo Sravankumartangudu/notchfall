@@ -48,6 +48,16 @@ final class Settings {
         get { d.string(forKey: "onAir") ?? "meetings" }
         set { d.set(newValue, forKey: "onAir") }
     }
+    /// The song playing in Music or Spotify, beside the notch and on top of "Up next".
+    var nowPlaying: Bool {
+        get { d.object(forKey: "nowPlaying") as? Bool ?? true }
+        set { d.set(newValue, forKey: "nowPlaying") }
+    }
+    /// Pause the music when a meeting alert drops, and play it again afterwards.
+    var pauseForAlerts: Bool {
+        get { d.object(forKey: "pauseForAlerts") as? Bool ?? true }
+        set { d.set(newValue, forKey: "pauseForAlerts") }
+    }
     /// "notch" (built-in notch screen, else the main screen) or "primary" (the screen with the menu bar).
     var screen: String {
         get { d.string(forKey: "screen") ?? "notch" }
@@ -91,6 +101,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var deviceOnSince: Date?       // mic/camera debouncing for the on-air indicator
     private var deviceOffSince: Date?
     private var demoOnAir: (OnAir, until: Date)?
+    private let player = NowPlaying()
+    private var demoTrack: Int?            // index of the made-up song while a music preview runs
+    private var pausedByUs = false         // we paused the music for an alert
+    private var resumeAfter: Date?         // …and play it again once this joined meeting is over
+    private var sawCall = false
+    private var pausedAt = Date.distantPast
 
     private static let sounds = ["Glass", "Hero", "Ping", "Pop", "Purr", "Submarine", "Tink"]
 
@@ -109,6 +125,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         island.model.onJoin = { m in if let url = m.link { NSWorkspace.shared.open(url) } }
         island.model.snoozeLabel = { m in m.kind == .meeting ? "Snooze 1 min" : "Snooze 5 min" }
         island.model.onMirror = { [weak self] open in self?.island.setMirror(open) }
+        island.model.onMusic = { [weak self] c in self?.music(c, byUser: true) }
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.image = Self.menuIcon()
@@ -141,9 +158,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         timer = t
 
         // --demo (meeting), --demo-tour, --demo-reminder, --demo-timer, --demo-live, --demo-peek, --demo-list,
-        // --demo-mirror, --demo-onair: previews for docs.
+        // --demo-mirror, --demo-onair, --demo-music: previews for docs.
         if let arg = CommandLine.arguments.first(where: { $0.hasPrefix("--demo") }) {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { self.runDemo(String(arg.dropFirst("--demo".count))) }
+        } else {
+            // Screenshot runs leave the real player alone, so docs never show someone's music.
+            player.enabled = settings.nowPlaying
+            player.onChange = { [weak self] t in self?.trackChanged(t) }
+            player.start()
         }
     }
 
@@ -179,6 +201,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         updateTitle()
         updateIsland()
         updateOnAir()
+        resumeAfterCallIfDone()
         // Wait while an alert is up or a dialog (e.g. "New timer…") is open.
         guard !island.isShowingAlert, NSApp.modalWindow == nil else { return }
 
@@ -279,7 +302,67 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if appearing { island.resolve() }
     }
 
+    // MARK: - Now Playing
+
+    private func trackChanged(_ t: Track?) {
+        guard demoTrack == nil else { return }
+        // Pressing play yourself (or quitting the player) means we no longer own the pause. A read that
+        // was already on its way when we paused still says "playing", so give it a moment.
+        if t == nil || t?.playing == true && Date().timeIntervalSince(pausedAt) > 2.5 { pausedByUs = false; resumeAfter = nil }
+        setTrack(t)
+    }
+
+    private func setTrack(_ t: Track?) {
+        let model = island.model
+        let wasPlaying = model.track?.playing == true
+        let changesList = (t == nil) != (model.track == nil)
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.8)) { model.track = t }
+        if wasPlaying != (t?.playing == true) || changesList { island.resolve() }
+    }
+
+    /// Play/pause/skip, either on the real player or on the made-up song in a preview.
+    private func music(_ c: NowPlaying.Command, byUser: Bool = false) {
+        if byUser { pausedByUs = false; resumeAfter = nil }
+        guard let i = demoTrack else { return player.send(c) }
+        guard var t = island.model.track else { return }
+        switch c {
+        case .next, .previous:
+            demoTrack = i + (c == .next ? 1 : -1)
+            t = Track.demo(demoTrack!, playing: t.playing)
+            t.position = 0
+        default:
+            t.position = t.elapsed(at: Date())
+            t.positionAt = Date()
+            t.playing = c == .play || (c == .playPause && !t.playing)
+        }
+        setTrack(t)
+    }
+
+    /// A meeting alert is about to drop: hush the music so the alert (and the call) is heard.
+    private func pauseForAlert(_ m: Meeting) {
+        guard settings.pauseForAlerts, m.kind == .meeting, island.model.track?.playing == true, !pausedByUs else { return }
+        music(.pause)
+        pausedByUs = true
+        pausedAt = Date()
+    }
+
+    private func resumeMusic() {
+        guard pausedByUs else { return }
+        pausedByUs = false
+        resumeAfter = nil
+        if island.model.track?.playing == false { music(.play) }
+    }
+
+    /// After joining from the alert, the music waits until the call is over: the on-air indicator has
+    /// come and gone, or (with it off, or no call picked up) the meeting's end time has passed.
+    private func resumeAfterCallIfDone() {
+        guard let end = resumeAfter, pausedByUs else { return }
+        if island.model.onAir != nil { sawCall = true; return }
+        if sawCall || Date() >= end { resumeMusic() }
+    }
+
     private func present(_ m: Meeting) {
+        pauseForAlert(m)
         if settings.sound != "off" { NSSound(named: settings.sound)?.play() }
         if settings.voice {
             let mins = Int((m.start.timeIntervalSinceNow / 60).rounded())
@@ -307,6 +390,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             snoozed[m.id] = Date().addingTimeInterval(m.kind == .meeting ? 60 : 300)
         case .dismiss:
             handled.insert(m.id)
+        }
+        if pausedByUs {
+            if action == .join, m.kind == .meeting {
+                resumeAfter = m.end
+                sawCall = false
+            } else {
+                // Dismissed or snoozed: back to the music (a snoozed alert pauses it again when it returns).
+                resumeMusic()
+            }
         }
         if m.id == demo?.id, action != .snooze { demo = nil }
         if m.kind == .timer, action != .snooze { timers.remove(m.id) }
@@ -383,7 +475,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let preview = NSMenu()
         for (label, arg) in [("Take the tour", "-tour"), ("Meeting alert", ""),("Meeting going live", "-live"), ("Reminder alert", "-reminder"),
                              ("Timer alert", "-timer"), ("Live countdown", "-peek"), ("Up next list", "-list"),
-                             ("Camera check", "-mirror"), ("On air (during a call)", "-onair")] {
+                             ("Camera check", "-mirror"), ("On air (during a call)", "-onair"), ("Now Playing", "-music")] {
             let mi = item(label, #selector(previewFromMenu(_:)))
             mi.representedObject = arg
             preview.addItem(mi)
@@ -441,6 +533,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             airMenu.addItem(mi)
         }
         prefs.addItem(submenu("On air indicator during calls", airMenu))
+        prefs.addItem(toggle("Show Now Playing (Music, Spotify)", settings.nowPlaying, #selector(toggleNowPlaying)))
+        prefs.addItem(toggle("Pause music when a meeting alert drops", settings.pauseForAlerts, #selector(togglePauseForAlerts)))
 
         let glowMenu = NSMenu()
         for g in Glow.allCases {
@@ -551,8 +645,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let forDocs = CommandLine.arguments.contains { $0.hasPrefix("--demo") }
         switch which {
         case "-tour":
-            // The whole life of an alert in ~16 s: drop out of the notch, camera check, on the call,
-            // Up next, live countdown.
+            // The whole life of an alert in ~19 s: music playing, the alert drops out of the notch (and
+            // pauses it), camera check, on the call, Up next with the player, live countdown.
+            startDemoMusic(for: 40)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.6) { [weak self] in self?.runDemo("-tour-alert") }
+        case "-tour-alert":
             let m = Meeting.demo(startingIn: Double(settings.leadMinutes * 60))
             demo = m
             alerted.insert(m.id)
@@ -612,6 +709,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak self] in
                 if self?.demo?.id == id { self?.demo = nil; self?.updateIsland() }
             }
+        case "-music":
+            startDemoMusic(for: 24)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+                guard let self, self.demoTrack != nil else { return }
+                self.demoAgenda = Meeting.demoAgenda()
+                self.updateIsland()
+                self.island.showListPreview(for: 12) { [weak self] in
+                    self?.demoAgenda = nil
+                    self?.updateIsland()
+                }
+            }
         case "-list":
             demoAgenda = Meeting.demoAgenda()
             updateIsland()
@@ -626,6 +734,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             demo = m
             alerted.insert(m.id)
             present(m)
+        }
+    }
+
+    /// Plays a made-up song (with a drawn cover) for a while, then gives the island back to the real player.
+    private func startDemoMusic(for seconds: Double) {
+        demoTrack = 0
+        setTrack(Track.demo(0))
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+            guard let self, self.demoTrack != nil else { return }
+            self.demoTrack = nil
+            self.pausedByUs = false
+            self.setTrack(self.player.track)
         }
     }
 
@@ -658,6 +778,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let raw = sender.representedObject as? String { settings.appearance = raw }
     }
 
+    @objc private func toggleNowPlaying() {
+        settings.nowPlaying.toggle()
+        guard demoTrack == nil else { return }
+        player.enabled = settings.nowPlaying
+        if !settings.nowPlaying { setTrack(nil) }
+    }
+    @objc private func togglePauseForAlerts() { settings.pauseForAlerts.toggle() }
     @objc private func toggleVoice() { settings.voice.toggle() }
     @objc private func toggleVideoOnly() { settings.videoOnly.toggle(); updateIsland() }
     @objc private func manualRefresh() { refresh() }

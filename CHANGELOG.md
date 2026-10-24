@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.2.0 (2026-10-24)
+
+- **🎵 Now Playing.** While Apple Music or Spotify plays, the album cover sits in the left wing and
+  an equaliser tinted by the cover dances in the right. Hovering the notch shows the player on top
+  of **Up next**: cover, song, artist, progress and ⏮ ⏯ ⏭.
+- **Pauses for meetings.** When a meeting alert drops the music pauses; dismissing or snoozing
+  plays it again, and after **Join** it waits until the call is over. Settings → Island →
+  **Pause music when a meeting alert drops**.
+- Notchfall only talks to a player that's already open, so it never launches Music or Spotify.
+- **✨ Preview an alert** gains **Now Playing**, and **Take the tour** starts with music playing.
+
 ## 1.1.0 (2026-10-24)
 
 - **🪞 Camera check.** A new button on meeting alerts opens a live, mirrored camera preview inside

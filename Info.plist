@@ -15,19 +15,21 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.1.0</string>
+	<string>1.2.0</string>
 	<key>CFBundleVersion</key>
-	<string>2</string>
+	<string>3</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 	<key>LSUIElement</key>
 	<true/>
-	<key>NSCameraUsageDescription</key>
-	<string>Notchfall shows your camera inside the island when you click Camera check, so you can see yourself before joining a meeting. The picture never leaves your Mac and isn't recorded.</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Notchfall asks Music and Spotify what is playing so it can show the song beside the notch, and pauses it when a meeting alert drops. It only talks to them while they are already open.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>Notchfall reads your calendar so it can drop an alert out of the notch before a meeting starts. Nothing leaves your Mac.</string>
 	<key>NSCalendarsUsageDescription</key>
 	<string>Notchfall reads your calendar so it can drop an alert out of the notch before a meeting starts. Nothing leaves your Mac.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Notchfall shows your camera inside the island when you click Camera check, so you can see yourself before joining a meeting. The picture never leaves your Mac and isn't recorded.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSRemindersFullAccessUsageDescription</key>
