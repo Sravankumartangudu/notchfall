@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.5.1 (2026-10-24)
+
+- **One copy at a time.** Opening Notchfall while it's already running no longer starts a second
+  copy drawing over the first.
+- The menu-bar icon, the appearance choices and the status shown in Nexus now come from the
+  edition (Edition/), so other editions built on the same core can have their own.
+
 ## 1.5.0 (2026-10-24)
 
 More than meetings: the island now shows the things you'd otherwise look away for.

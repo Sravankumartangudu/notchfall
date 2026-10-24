@@ -153,11 +153,11 @@ final class Settings {
     }
     /// "system" (follow macOS), "light" or "dark". Affects menus and dialogs only; the island is always black.
     var appearance: String {
-        get { d.string(forKey: "appearance") ?? "system" }
+        get { d.string(forKey: "appearance") ?? Edition.defaultAppearance }
         set { d.set(newValue, forKey: "appearance"); applyAppearance() }
     }
     func applyAppearance() {
-        switch appearance {
+        switch Edition.appearance(appearance) {
         case "light": NSApp.appearance = NSAppearance(named: .aqua)
         case "dark": NSApp.appearance = NSAppearance(named: .darkAqua)
         default: NSApp.appearance = nil
@@ -257,6 +257,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // One copy at a time: a second would draw a second island (and fight over any sign-in port).
+        let me = ProcessInfo.processInfo.processIdentifier
+        if !forDocs, NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "")
+            .contains(where: { $0.processIdentifier != me && !$0.isTerminated }) {
+            NSApp.terminate(nil)
+            return
+        }
         settings.applyAppearance()
         island = IslandController()
         applyIslandSettings()
@@ -287,13 +294,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         island.model.onClip = { [weak self] c in self?.clipTapped(c) }
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.button?.image = Self.menuIcon()
+        statusItem.button?.image = Edition.menuIcon()
         statusItem.button?.imagePosition = .imageLeading
         let menu = NSMenu()
         menu.delegate = self
         statusItem.menu = menu
         NexusBeacon.start(name: Edition.name) { [weak self] in
             guard let self else { return ("ok", "") }
+            if let s = Edition.status() { return s }
             if self.accessDenied { return ("warn", "calendar access denied") }
             if let next = self.relevant.first(where: { $0.start > Date() }) {
                 return ("ok", "next: \(countdown(next.start, now: Date(), short: true))")
@@ -949,7 +957,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         prefs.addItem(.separator())
         prefs.addItem(sectionHeader("App"))
         let appearanceMenu = NSMenu()
-        for (raw, label) in [("system", "System"), ("light", "Light"), ("dark", "Dark")] {
+        for (raw, label) in Edition.appearances {
             let mi = item(label, #selector(setAppearance(_:)))
             mi.representedObject = raw
             mi.state = settings.appearance == raw ? .on : .off

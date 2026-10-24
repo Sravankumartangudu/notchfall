@@ -17,6 +17,17 @@ enum Edition {
         dharalu.start()
     }
 
+    /// The menu-bar icon: the island with a drop falling out of it.
+    static func menuIcon() -> NSImage { AppDelegate.menuIcon() }
+
+    /// The choices under ⚙ Settings → Appearance, and what the saved one means right now.
+    static let appearances = [("system", "System"), ("light", "Light"), ("dark", "Dark")]
+    static let defaultAppearance = "system"
+    static func appearance(_ saved: String) -> String { saved }
+
+    /// A status for the fleet monitor that outranks the calendar's (nil: use the calendar's).
+    static func status() -> (String, String)? { nil }
+
     /// Extra lines in the menu, under the shelf and the clipboard.
     static func addMenuItems(to menu: NSMenu, _ app: AppDelegate) {}
 
