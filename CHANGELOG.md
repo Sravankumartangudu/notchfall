@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.3.0 (2026-10-24)
+
+- **☀️ Morning brief.** Once a day, the first time you're at the Mac between 5:00 and noon, the
+  island opens with *Good morning*: meetings today, the first one, reminders due and a timeline of
+  the day, with **Calendar** and **Got it**. It closes itself after 12 seconds (not while you're
+  pointing at it), and waits if a meeting is about to start.
+- **🍅 Focus timer.** Menu → **🍅 Focus** → 25 or 50 minutes. A tomato ring and mm:ss count down
+  beside the notch; when it's done, an alert offers **Start break** or **5 more min**, and the break
+  calls you back with **Back to focus**. Sessions survive a restart.
+- **⚡ Charging and 🎧 headphones toasts.** Plugging in the charger shows the battery filling to its
+  level; connecting AirPods or other headphones shows their name. Three seconds each, at most once a
+  minute per device. Settings → Island → **Charging and headphone toasts**.
+- **✨ Preview an alert** gains Morning brief, Charging, Headphones connected, Focus session and
+  Focus session done.
 ## 1.2.0 (2026-10-24)
 
 - **🎵 Now Playing.** While Apple Music or Spotify plays, the album cover sits in the left wing and

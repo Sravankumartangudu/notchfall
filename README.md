@@ -25,6 +25,9 @@ notch, springs open with a glowing rim and gives you a big **Join** button.
 | **🎙 On air** | While you're on a call, a slim island shows a red mic light, a camera light and the time left in the meeting. In the last 5 minutes the rim starts to glow, and if another meeting starts straight after, it shows **Next: Sprint Planning at 15:00**. Works with every meeting app. |
 | **🎵 Now Playing** | While Apple Music or Spotify plays, the album cover sits in the left wing and a little equaliser, tinted by the cover, dances in the right. Hover the notch for the player: cover, progress, ⏮ ⏯ ⏭. |
 | **Pauses for meetings** | When a meeting alert drops, the music pauses. Dismiss or snooze and it plays again; join the call and it waits until the call is over. |
+| **☀️ Morning brief** | The first time you sit down at the Mac each morning, the island opens with *Good morning*: how many meetings you have today, the first one, reminders due, and the whole day on a timeline. It tidies itself away after 12 seconds. |
+| **🍅 Focus timer** | Menu → **🍅 Focus**: 25 or 50 minutes of focus with a tomato ring counting down beside the notch, then a "Focus session done" alert with **Start break** or **5 more min**. The break counts down in blue and calls you back. |
+| **⚡ Charging and 🎧 headphones** | Plug in the charger and the wings show ⚡ Charging and the battery filling to its level. Connect AirPods or other headphones and they show by name with a ✓. Three seconds, then gone. |
 | **Live countdown** | In the minutes before a meeting, a ring and the minutes left sit either side of the notch. The rim starts to glow in the last minute. |
 | **Up next on hover** | Move the pointer onto the notch and the island opens into your next four items (three under the player), each with its own join button. |
 | **Gets more urgent** | The rim's gradient turns faster as the start gets close and goes red once the meeting is live. The title shimmers, and the badge pulses. |
@@ -56,6 +59,28 @@ notch, springs open with a glowing rim and gives you a big **Join** button.
 <tr>
 <td align="center"><sub>🎵 Now Playing in the wings</sub></td>
 <td align="center"><sub>Hover: the player on top of Up next</sub></td>
+</tr>
+<tr>
+<td colspan="2"><img src="docs/screenshots/brief.jpg" alt="Morning brief: 4 meetings today, the first one, 2 reminders, and the day on a timeline"></td>
+</tr>
+<tr>
+<td colspan="2" align="center"><sub>☀️ Morning brief: today at a glance, once a day</sub></td>
+</tr>
+<tr>
+<td><img src="docs/screenshots/focus.jpg" alt="Focus session counting down beside the notch"></td>
+<td><img src="docs/screenshots/focusdone.jpg" alt="Focus session done alert with Start break and 5 more min"></td>
+</tr>
+<tr>
+<td align="center"><sub>🍅 Focusing: the ring drains, minutes and seconds tick</sub></td>
+<td align="center"><sub>Done: start the break, or 5 more minutes</sub></td>
+</tr>
+<tr>
+<td><img src="docs/screenshots/charging.jpg" alt="Charging toast with 84% and a filling battery"></td>
+<td><img src="docs/screenshots/airpods.jpg" alt="AirPods Pro connected toast"></td>
+</tr>
+<tr>
+<td align="center"><sub>⚡ Charger plugged in</sub></td>
+<td align="center"><sub>🎧 Headphones connected</sub></td>
 </tr>
 <tr>
 <td><img src="docs/screenshots/reminder.jpg" alt="Reminder alert"></td>
@@ -134,11 +159,13 @@ makes `build/Notchfall.dmg` and `build/Notchfall.zip`.
 | You want to… | Do this |
 |---|---|
 | Join a meeting | Click **Join** on the alert, or the join button in **Up next**, or the meeting in the menu. |
-| Be reminded again | **Snooze**: 1 minute for meetings, 5 minutes for reminders and timers. |
+| Be reminded again | **Snooze**: 1 minute for meetings, 5 minutes for reminders and timers (**5 more min** for focus). |
 | Close an alert | **✕**, or **Done** when there's no link. |
 | See what's next | Hover the notch, or open the menu. |
 | Set a timer | Menu → **⏱ Quick timer** → a preset, or **New timer with a label…** |
 | Control the music | Hover the notch: ⏮ ⏯ ⏭ on the player. |
+| Focus | Menu → **🍅 Focus** → 25 or 50 minutes. While it runs, the same menu shows the time left, **Add 5 minutes** and **Stop the session**. |
+| Read the morning brief again | Menu → **✨ Preview an alert → Morning brief** shows how it looks; the real one comes once a day. |
 | Check your camera | Click 🪞 on a meeting alert. **Back** returns to the alert; **Join** joins. |
 | Try the animation | Menu → **✨ Preview an alert** → any item, or **Drop a test alert** (⌘T). |
 
@@ -148,7 +175,8 @@ When alerts appear:
 |---|---|---|
 | Meeting | at your lead time (2 min by default) | up to 5 min after it started |
 | Reminder | at your lead time | up to 1 hour late |
-| Quick timer | when it ends | always, even after sleep |
+| Quick timer, focus or break | when it ends | always, even after sleep |
+| Morning brief | the first time you're at the Mac between 5:00 and noon, once a day | not shown if you only come back after noon |
 
 Only one alert shows at a time. The next one waits until you close the current one.
 
@@ -166,6 +194,8 @@ Everything is under **⚙ Settings** in the menu.
 | **Island → On air indicator during calls** | Off; During calendar meetings (default); Whenever the mic or camera is on |
 | **Island → Show Now Playing (Music, Spotify)** | On (default) / off |
 | **Island → Pause music when a meeting alert drops** | On (default) / off |
+| **Island → Morning brief** | On (default) / off |
+| **Island → Charging and headphone toasts** | On (default) / off |
 | **Island → Glow colours** | Aurora, Neon, Ember, Ice, Mono |
 | **Island → Show on** | The built-in screen with the notch, or the main screen |
 | **Sound → Alert sound** | Off, Glass, Hero, Ping, Pop, Purr, Submarine, Tink |
@@ -191,6 +221,11 @@ Spotify covers). Clicking **Join** opens the meeting link in your browser or mee
   that's already open, so it never launches one. Apple Music covers come straight from the Music
   app; Spotify only gives a link, so Notchfall downloads that one cover image from Spotify's image
   server.
+- **Charging and headphones** are read from macOS's own power and Bluetooth audio state on your Mac.
+  No permission, nothing leaves the Mac.
+- **Morning brief** uses the same calendar and reminders Notchfall already reads. To know you're at
+  the Mac it only checks that the screen is awake and unlocked and that a key or the mouse was used
+  in the last minute; it never sees *what* you typed.
 
 ---
 

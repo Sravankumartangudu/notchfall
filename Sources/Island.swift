@@ -1,7 +1,21 @@
 import AppKit
 import SwiftUI
 
-enum OverlayAction { case join, snooze, dismiss }
+enum OverlayAction { case join, snooze, dismiss, next }
+
+/// A little notice that pops out of the notch for a few seconds.
+struct Toast: Equatable {
+    enum Kind: Equatable { case charging(Int), headphones(String) }
+    let kind: Kind
+    let id = UUID()
+}
+
+/// ☀️ The morning brief: what today holds, shown once, the first time you sit down in the morning.
+struct Brief: Equatable {
+    var meetings: [Meeting]       // today's meetings that haven't ended yet
+    var reminders: Int            // reminders due today
+    var shown: Date
+}
 
 /// You're on a call: who's listening (mic, camera), how long is left, and what comes straight after.
 struct OnAir: Equatable {
@@ -14,7 +28,7 @@ struct OnAir: Equatable {
 
 /// Everything the island draws. The controller decides *what* to show; this model owns *how* it moves.
 final class IslandModel: ObservableObject {
-    enum Mode { case idle, bulge, peek, list, alert, mirror, onAir, music }
+    enum Mode { case idle, bulge, peek, list, alert, mirror, onAir, music, toast, focus, brief }
 
     @Published private(set) var mode: Mode = .idle
     @Published private(set) var visible = false
@@ -29,6 +43,9 @@ final class IslandModel: ObservableObject {
     @Published var cameraState: CameraCheck.State = .off
     @Published var fakeCamera = false
     @Published var track: Track?
+    @Published var toast: Toast?
+    @Published var brief: Brief?
+    @Published var focus: Meeting?     // the running focus or break stretch
 
     var notch = CGSize(width: 190, height: 32)
     var hasNotch = true
@@ -39,6 +56,8 @@ final class IslandModel: ObservableObject {
     var onJoin: (Meeting) -> Void = { _ in }
     var onMirror: (Bool) -> Void = { _ in }
     var onMusic: (NowPlaying.Command) -> Void = { _ in }
+    var onBriefClose: () -> Void = {}
+    var onOpenCalendar: () -> Void = {}
     let camera = CameraCheck()
 
     private var seq = 0
@@ -65,6 +84,11 @@ final class IslandModel: ObservableObject {
             return showsNext ? Metrics(width: w + 2 * 104, height: h + 28, top: 8, bottom: 16)
                              : Metrics(width: w + 2 * 92, height: h, top: 6, bottom: 12)
         case .music: return Metrics(width: w + 2 * 60, height: h, top: 6, bottom: 12)
+        case .toast:
+            if case .headphones = toast?.kind { return Metrics(width: w + 2 * 112, height: h, top: 6, bottom: 12) }
+            return Metrics(width: w + 2 * 92, height: h, top: 6, bottom: 12)
+        case .focus: return Metrics(width: w + 2 * 78, height: h, top: 6, bottom: 12)
+        case .brief: return Metrics(width: max(560, w + 2 * 182), height: h + 166, top: 18, bottom: 38)
         }
     }
 
@@ -78,7 +102,8 @@ final class IslandModel: ObservableObject {
     }
 
     /// Big cards get a faint inner rim and a drop shadow; the slim wings states don't.
-    var isCard: Bool { mode == .alert || mode == .list || mode == .mirror }
+    var isCard: Bool { Self.big.contains(mode) }
+    static let big: Set<Mode> = [.alert, .list, .mirror, .brief]
 
     var frameSize: CGSize {
         let m = metrics(mode)
@@ -108,7 +133,7 @@ final class IslandModel: ObservableObject {
             visible = true
             let open = { [self] in
                 guard token == seq else { return }
-                let big = new == .alert || new == .list || new == .mirror
+                let big = Self.big.contains(new)
                 withAnimation(big ? .spring(response: 0.52, dampingFraction: 0.64) : .spring(response: 0.42, dampingFraction: 0.72)) {
                     mode = new
                 }
@@ -117,7 +142,7 @@ final class IslandModel: ObservableObject {
                     if token == seq { showContent = true }
                 }
             }
-            if fromNotch && (new == .alert || new == .list || new == .mirror) {
+            if fromNotch && Self.big.contains(new) {
                 withAnimation(.easeOut(duration: 0.13)) { mode = .bulge }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.13, execute: open)
             } else {
@@ -142,6 +167,12 @@ struct IslandView: View {
                 GlowRim(shape: shape, colors: m.glow.colors, urgency: urgency(a, lead: m.lead))
                     .frame(width: size.width, height: size.height)
                     .transition(.opacity.animation(.easeInOut(duration: 0.5)))
+            } else if m.mode == .brief {
+                // A slow, gentle glow: good morning, not an alarm.
+                GlowRim(shape: shape, colors: [rgb(1, 0.72, 0.35), rgb(1, 0.45, 0.45), rgb(0.95, 0.85, 0.5), rgb(1, 0.55, 0.3)], urgency: 0)
+                    .frame(width: size.width, height: size.height)
+                    .opacity(0.55)
+                    .transition(.opacity.animation(.easeInOut(duration: 0.6)))
             } else if let p = m.peek, m.mode == .peek, urgency(p, lead: 60) > 0 {
                 GlowRim(shape: shape, colors: m.glow.colors, urgency: urgency(p, lead: 60))
                     .frame(width: size.width, height: size.height)
@@ -188,6 +219,12 @@ struct IslandView: View {
             if let a = m.onAir { OnAirContent(m: m, air: a, inset: met.top + 10) }
         case .music:
             if let t = m.track { MusicContent(m: m, track: t, inset: met.top + 10) }
+        case .toast:
+            if let t = m.toast { ToastContent(m: m, toast: t, inset: met.top + 10) }
+        case .focus:
+            if let f = m.focus { FocusContent(m: m, item: f, inset: met.top + 10) }
+        case .brief:
+            if let b = m.brief { BriefContent(m: m, brief: b, inset: met.top + 20) }
         case .idle, .bulge: EmptyView()
         }
     }
@@ -271,7 +308,8 @@ struct CountdownLabel: View {
             let red = rgb(1, 0.27, 0.3)
             HStack(spacing: 6) {
                 LiveDot(color: red)
-                Text(item.kind == .meeting ? "LIVE" : item.kind == .timer ? "TIME'S UP" : "DUE NOW")
+                Text(item.kind == .meeting ? "LIVE" : item.kind == .timer ? "TIME'S UP"
+                     : item.kind == .focus ? (item.isBreak ? "BREAK'S OVER" : "DONE") : "DUE NOW")
                     .font(.system(size: 12, weight: .heavy, design: .rounded))
                     .kerning(0.8)
                     .foregroundStyle(red)
@@ -343,7 +381,13 @@ private struct AlertContent: View {
                     .buttonStyle(IslandButtonStyle())
                     .help("Camera check: see yourself before you join")
                 }
-                if item.link != nil {
+                if item.kind == .focus {
+                    Button { m.onAction(.next, item) } label: {
+                        Label(item.isBreak ? "Back to focus" : "Start break",
+                              systemImage: item.isBreak ? "brain.head.profile" : "cup.and.saucer.fill")
+                    }
+                    .buttonStyle(IslandButtonStyle(fill: tint, ink: .black, prominent: true))
+                } else if item.link != nil {
                     Button { m.onAction(.join, item) } label: {
                         Label(item.kind == .meeting ? "Join \(item.provider)" : "Open link", systemImage: "video.fill")
                     }
@@ -620,9 +664,12 @@ final class IslandController {
 
     func resolve() {
         if model.alert != nil { model.morph(to: mirrorOpen ? .mirror : .alert) }
+        else if model.brief != nil { model.morph(to: .brief) }
         else if hovering || listPreview { model.morph(to: .list) }
+        else if model.toast != nil { model.morph(to: .toast) }
         else if model.onAir != nil { model.morph(to: .onAir) }
         else if peekEnabled, model.peek != nil { model.morph(to: .peek) }
+        else if model.focus != nil { model.morph(to: .focus) }
         else if model.track?.playing == true { model.morph(to: .music) }
         else { model.morph(to: .idle) }
     }

@@ -45,6 +45,7 @@ extension Meeting.Kind {
         case .meeting: return glow.accent
         case .reminder: return rgb(1.0, 0.72, 0.25)
         case .timer: return rgb(0.35, 0.95, 0.75)
+        case .focus: return rgb(1.0, 0.42, 0.35)
         }
     }
 }

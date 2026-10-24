@@ -58,6 +58,20 @@ final class Settings {
         get { d.object(forKey: "pauseForAlerts") as? Bool ?? true }
         set { d.set(newValue, forKey: "pauseForAlerts") }
     }
+    /// ☀️ Morning brief: once a day, the first time you're at the Mac between 5:00 and noon.
+    var brief: Bool {
+        get { d.object(forKey: "brief") as? Bool ?? true }
+        set { d.set(newValue, forKey: "brief") }
+    }
+    var lastBriefDay: String {
+        get { d.string(forKey: "lastBriefDay") ?? "" }
+        set { d.set(newValue, forKey: "lastBriefDay") }
+    }
+    /// ⚡ charging and 🎧 headphones-connected toasts.
+    var toasts: Bool {
+        get { d.object(forKey: "toasts") as? Bool ?? true }
+        set { d.set(newValue, forKey: "toasts") }
+    }
     /// "notch" (built-in notch screen, else the main screen) or "primary" (the screen with the menu bar).
     var screen: String {
         get { d.string(forKey: "screen") ?? "notch" }
@@ -107,6 +121,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var resumeAfter: Date?         // …and play it again once this joined meeting is over
     private var sawCall = false
     private var pausedAt = Date.distantPast
+    private let peripherals = Peripherals()
+    private var lastToast: (Toast.Kind, Date)?
+    private var briefToken = 0
+    private var demoFocus: Meeting?
 
     private static let sounds = ["Glass", "Hero", "Ping", "Pop", "Purr", "Submarine", "Tink"]
 
@@ -123,9 +141,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         applyIslandSettings()
         island.model.onAction = { [weak self] action, m in self?.handle(action, for: m) }
         island.model.onJoin = { m in if let url = m.link { NSWorkspace.shared.open(url) } }
-        island.model.snoozeLabel = { m in m.kind == .meeting ? "Snooze 1 min" : "Snooze 5 min" }
+        island.model.snoozeLabel = { m in m.kind == .meeting ? "Snooze 1 min" : m.kind == .focus ? "5 more min" : "Snooze 5 min" }
         island.model.onMirror = { [weak self] open in self?.island.setMirror(open) }
         island.model.onMusic = { [weak self] c in self?.music(c, byUser: true) }
+        island.model.onBriefClose = { [weak self] in self?.closeBrief() }
+        island.model.onOpenCalendar = { [weak self] in
+            NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Calendar.app"))
+            self?.closeBrief()
+        }
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.image = Self.menuIcon()
@@ -166,6 +189,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             player.enabled = settings.nowPlaying
             player.onChange = { [weak self] t in self?.trackChanged(t) }
             player.start()
+            peripherals.onCharging = { [weak self] pct in self?.showToast(.charging(pct)) }
+            peripherals.onHeadphones = { [weak self] name in self?.showToast(.headphones(name)) }
+            peripherals.start()
         }
     }
 
@@ -202,6 +228,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         updateIsland()
         updateOnAir()
         resumeAfterCallIfDone()
+        maybeBrief()
         // Wait while an alert is up or a dialog (e.g. "New timer…") is open.
         guard !island.isShowingAlert, NSApp.modalWindow == nil else { return }
 
@@ -215,7 +242,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             switch m.kind {
             case .meeting: grace = 300
             case .reminder: grace = 3600
-            case .timer: grace = .infinity
+            case .timer, .focus: grace = .infinity
             }
             if let until = snoozed[m.id] {
                 if now >= until {
@@ -251,6 +278,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if peek?.id != model.peek?.id {
             model.peek = peek
             island.resolve()
+        }
+
+        let focus = demoFocus ?? timers.meetings.first { $0.kind == .focus && $0.start > now && $0.id != model.alert?.id }
+        if focus?.id != model.focus?.id || focus?.start != model.focus?.start {
+            let appearing = (focus == nil) != (model.focus == nil)
+            model.focus = focus
+            if appearing { island.resolve() }
         }
     }
 
@@ -372,6 +406,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             case .meeting: line = "\(m.title) " + (mins <= 0 ? "is starting now." : "starts in \(mins) minute\(plural).")
             case .reminder: line = "Reminder. \(m.title) " + (mins <= 0 ? "is due now." : "is due in \(mins) minute\(plural).")
             case .timer: line = "Time's up. \(m.title)."
+            case .focus: line = m.isBreak ? "Break's over. Ready to focus?" : "Focus session done. Time for a break."
             }
             synth.speak(AVSpeechUtterance(string: line))
         }
@@ -387,9 +422,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if m.kind == .meeting, !m.id.hasPrefix("demo-") { joined = m }
             if let url = m.link { NSWorkspace.shared.open(url) }
         case .snooze:
-            snoozed[m.id] = Date().addingTimeInterval(m.kind == .meeting ? 60 : 300)
+            if m.kind == .focus, timers.item(m.id) != nil {
+                // "5 more min" keeps the session going: the countdown comes back in the wings.
+                timers.extend(m.id, by: 300)
+                alerted.remove(m.id)
+            } else {
+                snoozed[m.id] = Date().addingTimeInterval(m.kind == .meeting ? 60 : 300)
+            }
         case .dismiss:
             handled.insert(m.id)
+            if m.kind == .focus { timers.stopFocus() }
+        case .next:
+            // Focus → break → focus…
+            handled.insert(m.id)
+            let f = timers.item(m.id)
+            let (focus, rest) = (f?.focusMinutes ?? 25, f?.breakMinutes ?? 5)
+            if m.id.hasPrefix("demo-") {
+                demoFocus = nil
+            } else {
+                timers.startFocus(m.isBreak ? "focus" : "break", focus: focus, rest: rest)
+            }
         }
         if pausedByUs {
             if action == .join, m.kind == .meeting {
@@ -402,6 +454,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         if m.id == demo?.id, action != .snooze { demo = nil }
         if m.kind == .timer, action != .snooze { timers.remove(m.id) }
+        updateTitle()
         updateIsland()
     }
 
@@ -464,6 +517,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             switch m.kind {
             case .timer: tag = "  ⏱"
             case .reminder: tag = "  ☑"
+            case .focus: tag = "  🍅"
             case .meeting: tag = m.link == nil ? "" : "  → \(m.provider)"
             }
             let mi = item("\(when)   \(truncate(m.title, 36))\(tag)", m.link == nil ? nil : #selector(joinFromMenu(_:)))
@@ -475,7 +529,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let preview = NSMenu()
         for (label, arg) in [("Take the tour", "-tour"), ("Meeting alert", ""),("Meeting going live", "-live"), ("Reminder alert", "-reminder"),
                              ("Timer alert", "-timer"), ("Live countdown", "-peek"), ("Up next list", "-list"),
-                             ("Camera check", "-mirror"), ("On air (during a call)", "-onair"), ("Now Playing", "-music")] {
+                             ("Camera check", "-mirror"), ("On air (during a call)", "-onair"), ("Now Playing", "-music"),
+                             ("Morning brief", "-brief"), ("Charging", "-charging"), ("Headphones connected", "-airpods"),
+                             ("Focus session", "-focus"), ("Focus session done", "-focusdone")] {
             let mi = item(label, #selector(previewFromMenu(_:)))
             mi.representedObject = arg
             preview.addItem(mi)
@@ -492,10 +548,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             mi.tag = n
             timerMenu.addItem(mi)
         }
-        if !timers.items.isEmpty {
+        if !timers.plain.isEmpty {
             timerMenu.addItem(.separator())
             timerMenu.addItem(disabled("Running"))
-            for t in timers.items {
+            for t in timers.plain {
                 let left = max(0, Int(t.due.timeIntervalSince(now) / 60 + 1))
                 let mi = item("✕ Cancel “\(truncate(t.title, 28))” (\(left)m left)", #selector(cancelTimer(_:)))
                 mi.representedObject = t.id
@@ -503,6 +559,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
         menu.addItem(submenu("⏱ Quick timer", timerMenu))
+
+        let focusMenu = NSMenu()
+        if let f = timers.focus {
+            let left = max(0, Int(ceil(f.due.timeIntervalSince(now) / 60)))
+            focusMenu.addItem(disabled(f.phase == "break" ? "☕ On a break · \(left) min left" : "🍅 Focusing · \(left) min left"))
+            focusMenu.addItem(item("Add 5 minutes", #selector(extendFocus)))
+            focusMenu.addItem(item("Stop the session", #selector(stopFocus)))
+        } else {
+            for (focus, rest) in [(25, 5), (50, 10)] {
+                let mi = item("Focus for \(focus) min (then a \(rest)-min break)", #selector(startFocus(_:)))
+                mi.tag = focus * 100 + rest
+                focusMenu.addItem(mi)
+            }
+        }
+        menu.addItem(submenu("🍅 Focus", focusMenu))
 
         // All preferences live under one Settings submenu, grouped by what they affect.
         let prefs = NSMenu()
@@ -535,6 +606,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         prefs.addItem(submenu("On air indicator during calls", airMenu))
         prefs.addItem(toggle("Show Now Playing (Music, Spotify)", settings.nowPlaying, #selector(toggleNowPlaying)))
         prefs.addItem(toggle("Pause music when a meeting alert drops", settings.pauseForAlerts, #selector(togglePauseForAlerts)))
+        prefs.addItem(toggle("Morning brief", settings.brief, #selector(toggleBrief)))
+        prefs.addItem(toggle("Charging and headphone toasts", settings.toasts, #selector(toggleToasts)))
 
         let glowMenu = NSMenu()
         for g in Glow.allCases {
@@ -720,6 +793,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     self?.updateIsland()
                 }
             }
+        case "-brief":
+            let now = Date()
+            func at(_ min: Double, _ len: Double, _ title: String) -> Meeting {
+                Meeting(id: "brief-\(title)", title: title, start: now.addingTimeInterval(min * 60),
+                        end: now.addingTimeInterval((min + len) * 60), link: URL(string: "https://zoom.us/j/1"),
+                        calendar: "Preview", attendees: 5)
+            }
+            showBrief(Brief(meetings: [at(14, 15, "Weekly Standup"), at(73, 45, "Design Review"), at(225, 30, "1:1 with Grace"),
+                                       at(320, 60, "Sprint Planning")],
+                            reminders: 2, shown: now), lifetime: forDocs ? 20 : BriefContent.lifetime)
+        case "-charging":
+            showToast(.charging(84), force: true)
+        case "-airpods":
+            showToast(.headphones("AirPods Pro"), force: true)
+        case "-focus":
+            var f = Meeting.demo(startingIn: 18 * 60 + 42, kind: .focus)
+            f.minutes = 25
+            demoFocus = f
+            updateIsland()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak self] in
+                if self?.demoFocus?.id == f.id { self?.demoFocus = nil; self?.updateIsland() }
+            }
+        case "-focusdone":
+            let m = Meeting.demo(startingIn: -1, kind: .focus)
+            demo = m
+            alerted.insert(m.id)
+            present(m)
         case "-list":
             demoAgenda = Meeting.demoAgenda()
             updateIsland()
@@ -734,6 +834,70 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             demo = m
             alerted.insert(m.id)
             present(m)
+        }
+    }
+
+    // MARK: - Morning brief and toasts
+
+    /// Shows the brief the first time you're actually at the Mac on a weekday or weekend morning: screen
+    /// awake, unlocked and in use. Checked every tick, so it covers launch, wake and unlock alike.
+    private func maybeBrief() {
+        let now = Date()
+        let day = now.formatted(.iso8601.year().month().day())
+        let hour = Calendar.current.component(.hour, from: now)
+        guard settings.brief, (5..<12).contains(hour), settings.lastBriefDay != day,
+              cal.status == .fullAccess, lastRefresh != .distantPast,
+              island.model.brief == nil, !island.isShowingAlert, NSApp.modalWindow == nil,
+              !Self.screenLocked, CGDisplayIsAsleep(CGMainDisplayID()) == 0,
+              CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!) < 60
+        else { return }
+        // Don't cover a meeting that's about to start; its alert comes first.
+        if relevant.contains(where: { !handled.contains($0.id) && $0.start > now
+                                      && $0.start.timeIntervalSince(now) < Double(settings.leadMinutes * 60) + 30 }) { return }
+        settings.lastBriefDay = day
+        let today = meetings.filter { Calendar.current.isDateInToday($0.start) && $0.end > now }
+        let dueToday = settings.reminders ? reminders.filter { Calendar.current.isDateInToday($0.start) }.count : 0
+        showBrief(Brief(meetings: today, reminders: dueToday, shown: now), lifetime: BriefContent.lifetime)
+    }
+
+    private static var screenLocked: Bool {
+        (CGSessionCopyCurrentDictionary() as? [String: Any])?["CGSSessionScreenIsLocked"] as? Bool ?? false
+    }
+
+    private func showBrief(_ b: Brief, lifetime: Double) {
+        briefToken += 1
+        let token = briefToken
+        island.model.brief = b
+        island.resolve()
+        DispatchQueue.main.asyncAfter(deadline: .now() + lifetime) { [weak self] in self?.closeBrief(token: token) }
+    }
+
+    /// Closes the brief. The timed close waits while the pointer is on it, so it never vanishes mid-read.
+    private func closeBrief(token: Int? = nil) {
+        guard island.model.brief != nil, token == nil || token == briefToken else { return }
+        if token != nil, island.hovering {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.closeBrief(token: token) }
+            return
+        }
+        briefToken += 1
+        island.model.brief = nil
+        island.resolve()
+    }
+
+    private func showToast(_ kind: Toast.Kind, force: Bool = false) {
+        guard force || settings.toasts else { return }
+        // Bluetooth reconnects in bursts; one toast per device (or charger plug-in) a minute is plenty.
+        if !force, let (k, at) = lastToast, k == kind || { if case .charging = k, case .charging = kind { return true }; return false }(),
+           Date().timeIntervalSince(at) < 60 { return }
+        lastToast = (kind, Date())
+        guard !island.isShowingAlert, island.model.brief == nil else { return }
+        let t = Toast(kind: kind)
+        island.model.toast = t
+        island.resolve()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.4) { [weak self] in
+            guard let self, self.island.model.toast?.id == t.id else { return }
+            self.island.model.toast = nil
+            self.island.resolve()
         }
     }
 
@@ -785,6 +949,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if !settings.nowPlaying { setTrack(nil) }
     }
     @objc private func togglePauseForAlerts() { settings.pauseForAlerts.toggle() }
+    @objc private func toggleBrief() { settings.brief.toggle() }
+    @objc private func toggleToasts() { settings.toasts.toggle() }
+
+    @objc private func startFocus(_ sender: NSMenuItem) {
+        timers.startFocus("focus", focus: sender.tag / 100, rest: sender.tag % 100)
+        updateIsland()
+        updateTitle()
+    }
+
+    @objc private func extendFocus() {
+        if let f = timers.focus { timers.extend(f.id, by: 300) }
+        updateIsland()
+        updateTitle()
+    }
+
+    @objc private func stopFocus() {
+        timers.stopFocus()
+        updateIsland()
+        updateTitle()
+    }
     @objc private func toggleVoice() { settings.voice.toggle() }
     @objc private func toggleVideoOnly() { settings.videoOnly.toggle(); updateIsland() }
     @objc private func manualRefresh() { refresh() }

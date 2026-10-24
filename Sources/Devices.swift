@@ -1,6 +1,7 @@
 import AppKit
 import CoreAudio
 import CoreMediaIO
+import IOKit.ps
 
 /// Is anything recording from a microphone or the camera right now? Read straight from CoreAudio and
 /// CoreMediaIO, so it works for every meeting app and needs no permission.
@@ -95,5 +96,73 @@ enum Devices {
             var got: UInt32 = 0
             return CMIOObjectGetPropertyData(dev, &addr, 0, nil, UInt32(MemoryLayout<UInt32>.size), &got, &on) == 0 && on != 0
         }
+    }
+}
+
+/// Watches for the charger being plugged in and Bluetooth headphones connecting, for the little
+/// toasts that pop out of the notch.
+final class Peripherals {
+    var onCharging: (_ percent: Int) -> Void = { _ in }
+    var onHeadphones: (_ name: String) -> Void = { _ in }
+
+    private var onAC: Bool?
+    private var known = Set<AudioObjectID>()
+    private var powerSource: CFRunLoopSource?
+
+    func start() {
+        onAC = Self.power()?.ac
+        let ctx = Unmanaged.passUnretained(self).toOpaque()
+        if let src = IOPSNotificationCreateRunLoopSource({ ctx in
+            guard let ctx else { return }
+            Unmanaged<Peripherals>.fromOpaque(ctx).takeUnretainedValue().powerChanged()
+        }, ctx)?.takeRetainedValue() {
+            CFRunLoopAddSource(CFRunLoopGetMain(), src, .defaultMode)
+            powerSource = src
+        }
+
+        known = Set(Devices.audioDevices)
+        var addr = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDevices, mScope: kAudioObjectPropertyScopeGlobal,
+                                              mElement: kAudioObjectPropertyElementMain)
+        AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &addr, .main) { [weak self] _, _ in
+            self?.devicesChanged()
+        }
+    }
+
+    private func devicesChanged() {
+        let now = Set(Devices.audioDevices)
+        let added = now.subtracting(known)
+        known = now
+        for d in added where Devices.isBluetooth(d) && Devices.hasOutput(d) {
+            if let name = Devices.name(d) { onHeadphones(name) }
+        }
+    }
+
+    private func powerChanged() {
+        guard let p = Self.power() else { return }
+        if onAC == false, p.ac, let pct = p.percent { onCharging(pct) }
+        onAC = p.ac
+    }
+
+    /// (on AC power, internal battery %). nil on Macs without a battery.
+    static func power() -> (ac: Bool, percent: Int?)? {
+        guard let info = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
+              let list = IOPSCopyPowerSourcesList(info)?.takeRetainedValue() as? [CFTypeRef] else { return nil }
+        for src in list {
+            guard let d = IOPSGetPowerSourceDescription(info, src)?.takeUnretainedValue() as? [String: Any],
+                  d[kIOPSTypeKey] as? String == kIOPSInternalBatteryType else { continue }
+            let ac = d[kIOPSPowerSourceStateKey] as? String == kIOPSACPowerValue
+            let cur = d[kIOPSCurrentCapacityKey] as? Int, max = d[kIOPSMaxCapacityKey] as? Int
+            return (ac, cur.flatMap { c in max.map { m in m > 0 ? c * 100 / m : c } })
+        }
+        return nil
+    }
+
+    static func headphoneSymbol(_ name: String) -> String {
+        let n = name.lowercased()
+        if n.contains("airpods max") { return "airpodsmax" }
+        if n.contains("airpods pro") { return "airpodspro" }
+        if n.contains("airpods") { return "airpods" }
+        if n.contains("beats") { return "beats.headphones" }
+        return "headphones"
     }
 }

@@ -11,12 +11,17 @@ struct Meeting: Identifiable, Equatable {
     let attendees: Int
     var people: [String] = []
     var kind: Kind = .meeting
+    var minutes = 0                 // focus sessions: how long this stretch is
 
-    enum Kind { case meeting, reminder, timer }
+    enum Kind { case meeting, reminder, timer, focus }
+
+    /// A focus session alternates focus and break stretches; `calendar` says which one this is.
+    var isBreak: Bool { kind == .focus && calendar == "Break" }
 
     var provider: String {
         if kind == .reminder { return "Reminder" }
         if kind == .timer { return "Timer" }
+        if kind == .focus { return isBreak ? "Break" : "Focus" }
         guard let host = link?.host else { return "Calendar" }
         if host.contains("meet.google") { return "Google Meet" }
         if host.contains("zoom") { return "Zoom" }
@@ -29,6 +34,7 @@ struct Meeting: Identifiable, Equatable {
         switch kind {
         case .reminder: return "checklist"
         case .timer: return "timer"
+        case .focus: return isBreak ? "cup.and.saucer.fill" : "brain.head.profile"
         case .meeting: return link == nil ? "calendar" : "video.fill"
         }
     }
@@ -38,6 +44,9 @@ struct Meeting: Identifiable, Equatable {
         f.dateFormat = "HH:mm"
         switch kind {
         case .timer: return "Quick timer  ·  set for \(f.string(from: start))"
+        case .focus:
+            return isBreak ? "\(minutes)-min break is over. Ready for the next round?"
+                           : "\(minutes) minutes of focus, done at \(f.string(from: start)). Time to stretch."
         case .reminder: return "Due \(f.string(from: start))  ·  \(calendar)"
         case .meeting:
             let crew = attendees > 0 ? "\(attendees) \(attendees == 1 ? "person" : "people")" : "Just you"
@@ -51,6 +60,10 @@ struct Meeting: Identifiable, Equatable {
             return Meeting(id: "demo-\(UUID().uuidString)", title: "Water the plants", start: Date().addingTimeInterval(seconds),
                            end: Date().addingTimeInterval(seconds + 900), link: nil, calendar: "Home",
                            attendees: 0, kind: .reminder)
+        case .focus:
+            return Meeting(id: "demo-\(UUID().uuidString)", title: "Focus session done", start: Date().addingTimeInterval(seconds),
+                           end: Date().addingTimeInterval(seconds + 300), link: nil, calendar: "Focus",
+                           attendees: 0, kind: .focus, minutes: 25)
         case .timer:
             return Meeting(id: "demo-\(UUID().uuidString)", title: "Stretch break", start: Date().addingTimeInterval(seconds),
                            end: Date().addingTimeInterval(seconds + 300), link: nil, calendar: "Quick timer",

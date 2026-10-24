@@ -1,12 +1,19 @@
 import AppKit
 
-/// One-off countdown reminders started from the menu ("Remind me in 25 min"). Saved to
-/// UserDefaults so they survive a restart.
+/// One-off countdown reminders started from the menu ("Remind me in 25 min"), and the 🍅 focus
+/// session (focus, break, focus…). Saved to UserDefaults so they survive a restart.
 final class QuickTimers {
     struct Item: Codable {
         let id: String
         let title: String
-        let due: Date
+        var due: Date
+        // Focus sessions only (nil for plain timers, and for timers saved by older versions).
+        var phase: String? = nil        // "focus" or "break"
+        var focusMinutes: Int? = nil
+        var breakMinutes: Int? = nil
+
+        var isFocus: Bool { phase != nil }
+        var minutes: Int { (phase == "break" ? breakMinutes : focusMinutes) ?? 0 }
     }
 
     private let key = "quickTimers"
@@ -23,8 +30,34 @@ final class QuickTimers {
     var meetings: [Meeting] {
         items.map {
             Meeting(id: $0.id, title: $0.title, start: $0.due, end: $0.due.addingTimeInterval(300),
-                    link: nil, calendar: "Quick timer", attendees: 0, kind: .timer)
+                    link: nil, calendar: $0.phase == "break" ? "Break" : $0.isFocus ? "Focus" : "Quick timer",
+                    attendees: 0, kind: $0.isFocus ? .focus : .timer, minutes: $0.minutes)
         }
+    }
+
+    var plain: [Item] { items.filter { !$0.isFocus } }
+    var focus: Item? { items.first { $0.isFocus } }
+    func item(_ id: String) -> Item? { items.first { $0.id == id } }
+
+    /// Starts a focus (or break) stretch, replacing any running one: there's only ever one session.
+    func startFocus(_ phase: String, focus: Int, rest: Int) {
+        items.removeAll { $0.isFocus }
+        let minutes = phase == "break" ? rest : focus
+        items.append(Item(id: "focus-\(UUID().uuidString)", title: phase == "break" ? "Break's over" : "Focus session done",
+                          due: Date().addingTimeInterval(Double(minutes) * 60),
+                          phase: phase, focusMinutes: focus, breakMinutes: rest))
+        save()
+    }
+
+    func stopFocus() {
+        items.removeAll { $0.isFocus }
+        save()
+    }
+
+    func extend(_ id: String, by seconds: Double) {
+        guard let i = items.firstIndex(where: { $0.id == id }) else { return }
+        items[i].due = max(items[i].due, Date()).addingTimeInterval(seconds)
+        save()
     }
 
     func add(minutes: Int, title: String) {
