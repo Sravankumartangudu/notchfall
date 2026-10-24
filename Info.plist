@@ -15,13 +15,15 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0.0</string>
+	<string>1.1.0</string>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<string>2</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>Notchfall shows your camera inside the island when you click Camera check, so you can see yourself before joining a meeting. The picture never leaves your Mac and isn't recorded.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>Notchfall reads your calendar so it can drop an alert out of the notch before a meeting starts. Nothing leaves your Mac.</string>
 	<key>NSCalendarsUsageDescription</key>

@@ -3,9 +3,18 @@ import SwiftUI
 
 enum OverlayAction { case join, snooze, dismiss }
 
+/// You're on a call: who's listening (mic, camera), how long is left, and what comes straight after.
+struct OnAir: Equatable {
+    var meeting: Meeting?     // the calendar meeting this call belongs to, if any
+    var since: Date
+    var mic: Bool
+    var camera: Bool
+    var next: Meeting?        // a meeting that starts right as this one ends
+}
+
 /// Everything the island draws. The controller decides *what* to show; this model owns *how* it moves.
 final class IslandModel: ObservableObject {
-    enum Mode { case idle, bulge, peek, list, alert }
+    enum Mode { case idle, bulge, peek, list, alert, mirror, onAir }
 
     @Published private(set) var mode: Mode = .idle
     @Published private(set) var visible = false
@@ -16,6 +25,9 @@ final class IslandModel: ObservableObject {
     @Published var agenda: [Meeting] = []
     @Published var rippleID = 0
     @Published var glow: Glow = .aurora
+    @Published var onAir: OnAir?
+    @Published var cameraState: CameraCheck.State = .off
+    @Published var fakeCamera = false
 
     var notch = CGSize(width: 190, height: 32)
     var hasNotch = true
@@ -24,6 +36,8 @@ final class IslandModel: ObservableObject {
     var snoozeLabel: (Meeting) -> String = { _ in "Snooze" }
     var onAction: (OverlayAction, Meeting) -> Void = { _, _ in }
     var onJoin: (Meeting) -> Void = { _ in }
+    var onMirror: (Bool) -> Void = { _ in }
+    let camera = CameraCheck()
 
     private var seq = 0
 
@@ -42,8 +56,22 @@ final class IslandModel: ObservableObject {
         case .alert:
             let people = (alert?.people.isEmpty ?? true) ? 0 : 18.0
             return Metrics(width: max(540, w + 2 * 172), height: h + 124 + people, top: 18, bottom: 38)
+        case .mirror:
+            return Metrics(width: max(540, w + 2 * 172), height: h + 8 + 214 + 14 + 32 + 16, top: 18, bottom: 38)
+        case .onAir:
+            return showsNext ? Metrics(width: w + 2 * 104, height: h + 28, top: 8, bottom: 16)
+                             : Metrics(width: w + 2 * 92, height: h, top: 6, bottom: 12)
         }
     }
+
+    /// The "Next: …" line under the on-air wings, in the last 10 minutes of a back-to-back meeting.
+    var showsNext: Bool {
+        guard let a = onAir, a.next != nil, let m = a.meeting else { return false }
+        return m.end.timeIntervalSince(now) <= 600
+    }
+
+    /// Big cards get a faint inner rim and a drop shadow; the slim wings states don't.
+    var isCard: Bool { mode == .alert || mode == .list || mode == .mirror }
 
     var frameSize: CGSize {
         let m = metrics(mode)
@@ -73,7 +101,7 @@ final class IslandModel: ObservableObject {
             visible = true
             let open = { [self] in
                 guard token == seq else { return }
-                let big = new == .alert || new == .list
+                let big = new == .alert || new == .list || new == .mirror
                 withAnimation(big ? .spring(response: 0.52, dampingFraction: 0.64) : .spring(response: 0.42, dampingFraction: 0.72)) {
                     mode = new
                 }
@@ -82,7 +110,7 @@ final class IslandModel: ObservableObject {
                     if token == seq { showContent = true }
                 }
             }
-            if fromNotch && (new == .alert || new == .list) {
+            if fromNotch && (new == .alert || new == .list || new == .mirror) {
                 withAnimation(.easeOut(duration: 0.13)) { mode = .bulge }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.13, execute: open)
             } else {
@@ -103,12 +131,18 @@ struct IslandView: View {
         let size = CGSize(width: met.width + 2 * met.top, height: met.height)
 
         ZStack(alignment: .top) {
-            if let a = m.alert, m.mode == .alert {
+            if let a = m.alert, m.mode == .alert || m.mode == .mirror {
                 GlowRim(shape: shape, colors: m.glow.colors, urgency: urgency(a, lead: m.lead))
                     .frame(width: size.width, height: size.height)
                     .transition(.opacity.animation(.easeInOut(duration: 0.5)))
             } else if let p = m.peek, m.mode == .peek, urgency(p, lead: 60) > 0 {
                 GlowRim(shape: shape, colors: m.glow.colors, urgency: urgency(p, lead: 60))
+                    .frame(width: size.width, height: size.height)
+                    .opacity(0.6)
+                    .transition(.opacity.animation(.easeInOut(duration: 0.6)))
+            } else if let end = m.onAir?.meeting?.end, m.mode == .onAir, end.timeIntervalSince(m.now) <= 300 {
+                // Last five minutes of the call: the rim wakes up and warms as the end gets close.
+                GlowRim(shape: shape, colors: m.glow.colors, urgency: max(0.2, 1 - end.timeIntervalSince(m.now) / 300))
                     .frame(width: size.width, height: size.height)
                     .opacity(0.6)
                     .transition(.opacity.animation(.easeInOut(duration: 0.6)))
@@ -122,12 +156,12 @@ struct IslandView: View {
             ZStack(alignment: .top) {
                 shape.fill(.black)
                 // Faint inner rim so the card has depth against dark wallpapers.
-                shape.stroke(.white.opacity(m.mode == .alert || m.mode == .list ? 0.07 : 0), lineWidth: 1)
+                shape.stroke(.white.opacity(m.isCard ? 0.07 : 0), lineWidth: 1)
                 content(met)
             }
             .frame(width: size.width, height: size.height)
             .clipShape(shape)
-            .shadow(color: .black.opacity(m.mode == .alert || m.mode == .list ? 0.55 : 0), radius: 22, y: 10)
+            .shadow(color: .black.opacity(m.isCard ? 0.55 : 0), radius: 22, y: 10)
         }
         .opacity(m.visible ? 1 : 0)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -141,6 +175,10 @@ struct IslandView: View {
         case .list: AgendaContent(m: m, inset: met.top + 16)
         case .peek:
             if let p = m.peek { PeekContent(m: m, item: p, inset: met.top + 10) }
+        case .mirror:
+            if let a = m.alert { MirrorContent(m: m, item: a, inset: met.top + 20) }
+        case .onAir:
+            if let a = m.onAir { OnAirContent(m: m, air: a, inset: met.top + 10) }
         case .idle, .bulge: EmptyView()
         }
     }
@@ -161,7 +199,7 @@ func countdown(_ start: Date, now: Date, short: Bool = false) -> String {
     return "\(s / 3600)h \(s % 3600 / 60)m"
 }
 
-private struct Reveal: ViewModifier {
+struct Reveal: ViewModifier {
     let on: Bool
     let delay: Double
 
@@ -175,12 +213,12 @@ private struct Reveal: ViewModifier {
     }
 }
 
-private extension View {
+extension View {
     func reveal(_ on: Bool, _ delay: Double = 0) -> some View { modifier(Reveal(on: on, delay: delay)) }
 }
 
 /// The two "wings" either side of the camera housing. Nothing is drawn in the middle, where the notch is.
-private struct Wings<L: View, R: View>: View {
+struct Wings<L: View, R: View>: View {
     let m: IslandModel
     @ViewBuilder let left: L
     @ViewBuilder let right: R
@@ -195,7 +233,7 @@ private struct Wings<L: View, R: View>: View {
     }
 }
 
-private struct LiveDot: View {
+struct LiveDot: View {
     let color: Color
     @State private var pulse = false
     var body: some View {
@@ -206,7 +244,7 @@ private struct LiveDot: View {
 }
 
 /// Rolling digits ("in 1:58"), or a pulsing LIVE / DUE / TIME'S UP tag once the moment arrives.
-private struct CountdownLabel: View {
+struct CountdownLabel: View {
     let item: Meeting
     let now: Date
     let tint: Color
@@ -289,6 +327,13 @@ private struct AlertContent: View {
                 Button(m.snoozeLabel(item)) { m.onAction(.snooze, item) }
                     .buttonStyle(IslandButtonStyle())
                 Spacer()
+                if item.kind == .meeting, item.link != nil {
+                    Button { m.onMirror(true) } label: {
+                        Image(systemName: "camera.viewfinder").font(.system(size: 13, weight: .semibold))
+                    }
+                    .buttonStyle(IslandButtonStyle())
+                    .help("Camera check: see yourself before you join")
+                }
                 if item.link != nil {
                     Button { m.onAction(.join, item) } label: {
                         Label(item.kind == .meeting ? "Join \(item.provider)" : "Open link", systemImage: "video.fill")
@@ -478,6 +523,7 @@ final class IslandController {
     var screenChoice = "notch"
 
     var isShowingAlert: Bool { model.alert != nil }
+    private(set) var mirrorOpen = false
     var windowNumber: Int { panel.windowNumber }
 
     init() {
@@ -525,7 +571,24 @@ final class IslandController {
     }
 
     func closeAlert() {
+        setMirror(false)
         model.alert = nil
+        resolve()
+    }
+
+    /// Opens or closes the camera check in place of the alert. The camera only runs while it's open.
+    func setMirror(_ open: Bool) {
+        guard open != mirrorOpen, !open || model.alert != nil else { return }
+        mirrorOpen = open
+        if open {
+            if !model.fakeCamera {
+                model.camera.onState = { [weak self] s in self?.model.cameraState = s }
+                model.camera.start()
+            }
+        } else {
+            model.camera.stop()
+            model.cameraState = .off
+        }
         resolve()
     }
 
@@ -543,8 +606,9 @@ final class IslandController {
     }
 
     func resolve() {
-        if model.alert != nil { model.morph(to: .alert) }
+        if model.alert != nil { model.morph(to: mirrorOpen ? .mirror : .alert) }
         else if hovering || listPreview { model.morph(to: .list) }
+        else if model.onAir != nil { model.morph(to: .onAir) }
         else if peekEnabled, model.peek != nil { model.morph(to: .peek) }
         else { model.morph(to: .idle) }
     }

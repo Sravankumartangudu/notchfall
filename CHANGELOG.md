@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.1.0 (2026-10-24)
+
+- **🪞 Camera check.** A new button on meeting alerts opens a live, mirrored camera preview inside
+  the island, with **Back** and **Join**. The camera only runs while it's open.
+- **🎙 On air.** While you're on a call, a slim island beside the notch shows mic and camera lights
+  and the time left in the meeting. The rim glows in the last 5 minutes, and a **Next** line appears
+  when another meeting starts straight after. Settings → Island → **On air indicator during calls**
+  (Off / During calendar meetings / Whenever the mic or camera is on).
+- Always-listening voice assistants (Siri, wake-word apps) don't count as being on a call.
+- **✨ Preview an alert** gains **Camera check** and **On air**, and **Take the tour** shows both.
+
 ## 1.0.0 (2026-10-23)
 
 First release.

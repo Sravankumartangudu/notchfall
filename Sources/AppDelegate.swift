@@ -42,6 +42,12 @@ final class Settings {
         get { d.object(forKey: "reminders") as? Bool ?? false }
         set { d.set(newValue, forKey: "reminders") }
     }
+    /// On-air indicator: "off", "meetings" (only on a call during a calendar meeting) or "always"
+    /// (whenever another app has the mic or camera on).
+    var onAir: String {
+        get { d.string(forKey: "onAir") ?? "meetings" }
+        set { d.set(newValue, forKey: "onAir") }
+    }
     /// "notch" (built-in notch screen, else the main screen) or "primary" (the screen with the menu bar).
     var screen: String {
         get { d.string(forKey: "screen") ?? "notch" }
@@ -81,6 +87,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var snoozed: [String: Date] = [:]
     private var lastRefresh = Date.distantPast
     private var accessDenied = false
+    private var joined: Meeting?           // the meeting last joined from Notchfall
+    private var deviceOnSince: Date?       // mic/camera debouncing for the on-air indicator
+    private var deviceOffSince: Date?
+    private var demoOnAir: (OnAir, until: Date)?
 
     private static let sounds = ["Glass", "Hero", "Ping", "Pop", "Purr", "Submarine", "Tink"]
 
@@ -98,6 +108,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         island.model.onAction = { [weak self] action, m in self?.handle(action, for: m) }
         island.model.onJoin = { m in if let url = m.link { NSWorkspace.shared.open(url) } }
         island.model.snoozeLabel = { m in m.kind == .meeting ? "Snooze 1 min" : "Snooze 5 min" }
+        island.model.onMirror = { [weak self] open in self?.island.setMirror(open) }
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.image = Self.menuIcon()
@@ -129,7 +140,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         RunLoop.main.add(t, forMode: .common)
         timer = t
 
-        // --demo (meeting), --demo-tour, --demo-reminder, --demo-timer, --demo-live, --demo-peek, --demo-list: previews for docs.
+        // --demo (meeting), --demo-tour, --demo-reminder, --demo-timer, --demo-live, --demo-peek, --demo-list,
+        // --demo-mirror, --demo-onair: previews for docs.
         if let arg = CommandLine.arguments.first(where: { $0.hasPrefix("--demo") }) {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { self.runDemo(String(arg.dropFirst("--demo".count))) }
         }
@@ -166,6 +178,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if Date().timeIntervalSince(lastRefresh) > 60 { refresh() }
         updateTitle()
         updateIsland()
+        updateOnAir()
         // Wait while an alert is up or a dialog (e.g. "New timer…") is open.
         guard !island.isShowingAlert, NSApp.modalWindow == nil else { return }
 
@@ -218,6 +231,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    /// Shows the on-air island while you're on a call. The mic/camera has to stay on for 2 s before it
+    /// appears and off for 6 s before it goes, so switching devices or a quick dictation doesn't flicker it.
+    private func updateOnAir() {
+        let now = Date()
+        let model = island.model
+        if let (demoAir, until) = demoOnAir {
+            if now < until { return setOnAir(demoAir) }
+            demoOnAir = nil
+        }
+        guard settings.onAir != "off" else { return setOnAir(nil) }
+
+        let mic = Devices.micInUse
+        // Our own camera check lights the camera too; that isn't a call.
+        let cam = island.mirrorOpen ? false : Devices.cameraInUse
+        if mic || cam {
+            deviceOffSince = nil
+            if deviceOnSince == nil { deviceOnSince = now }
+        } else if deviceOnSince != nil {
+            if deviceOffSince == nil { deviceOffSince = now }
+            if now.timeIntervalSince(deviceOffSince!) > 6 { deviceOnSince = nil; deviceOffSince = nil }
+        }
+        guard let since = deviceOnSince, now.timeIntervalSince(since) >= 2 else { return setOnAir(nil) }
+
+        // The call's meeting: the one joined from Notchfall, else a calendar meeting that's on now
+        // (or starts within 5 minutes, for people who join early).
+        if let j = joined, j.end <= now { joined = nil }
+        let meetingsNow = relevant.filter { $0.kind == .meeting && $0.end > now && $0.start.timeIntervalSince(now) <= 300 }
+        let meeting = joined ?? meetingsNow.first { $0.link != nil } ?? meetingsNow.first
+        if meeting == nil && settings.onAir != "always" { return setOnAir(nil) }
+
+        let next = meeting.flatMap { cur in
+            relevant.first { $0.kind == .meeting && $0.id != cur.id && !handled.contains($0.id)
+                && $0.start >= cur.end.addingTimeInterval(-120) && $0.start <= cur.end.addingTimeInterval(600) }
+        }
+        let air = OnAir(meeting: meeting, since: model.onAir?.since ?? since,
+                        mic: mic || (model.onAir?.mic ?? false) && deviceOffSince != nil,
+                        camera: cam, next: next)
+        setOnAir(air)
+    }
+
+    private func setOnAir(_ air: OnAir?) {
+        let model = island.model
+        guard air != model.onAir else { return }
+        let appearing = (air == nil) != (model.onAir == nil)
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.75)) { model.onAir = air }
+        if appearing { island.resolve() }
+    }
+
     private func present(_ m: Meeting) {
         if settings.sound != "off" { NSSound(named: settings.sound)?.play() }
         if settings.voice {
@@ -240,6 +301,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         switch action {
         case .join:
             handled.insert(m.id)
+            if m.kind == .meeting, !m.id.hasPrefix("demo-") { joined = m }
             if let url = m.link { NSWorkspace.shared.open(url) }
         case .snooze:
             snoozed[m.id] = Date().addingTimeInterval(m.kind == .meeting ? 60 : 300)
@@ -320,7 +382,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
         let preview = NSMenu()
         for (label, arg) in [("Take the tour", "-tour"), ("Meeting alert", ""),("Meeting going live", "-live"), ("Reminder alert", "-reminder"),
-                             ("Timer alert", "-timer"), ("Live countdown", "-peek"), ("Up next list", "-list")] {
+                             ("Timer alert", "-timer"), ("Live countdown", "-peek"), ("Up next list", "-list"),
+                             ("Camera check", "-mirror"), ("On air (during a call)", "-onair")] {
             let mi = item(label, #selector(previewFromMenu(_:)))
             mi.representedObject = arg
             preview.addItem(mi)
@@ -370,6 +433,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         prefs.addItem(submenu("Live countdown beside the notch", peekMenu))
         prefs.addItem(toggle("Open “Up next” when hovering the notch", settings.hover, #selector(toggleHover)))
+        let airMenu = NSMenu()
+        for (raw, label) in [("off", "Off"), ("meetings", "During calendar meetings"), ("always", "Whenever the mic or camera is on")] {
+            let mi = item(label, #selector(setOnAirMode(_:)))
+            mi.representedObject = raw
+            mi.state = settings.onAir == raw ? .on : .off
+            airMenu.addItem(mi)
+        }
+        prefs.addItem(submenu("On air indicator during calls", airMenu))
 
         let glowMenu = NSMenu()
         for g in Glow.allCases {
@@ -471,21 +542,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         runDemo(sender.representedObject as? String ?? "")
     }
 
-    /// "" meeting, "-tour" (everything in a row), "-live", "-reminder", "-timer", "-peek" (countdown beside the notch), "-list" (Up next).
+    /// "" meeting, "-tour" (everything in a row), "-live", "-reminder", "-timer", "-peek" (countdown beside the notch),
+    /// "-list" (Up next), "-mirror" (camera check), "-onair" (on a call).
     private func runDemo(_ which: String) {
         // Don't replace a real alert: it would close without its Join/Snooze/Dismiss handling.
         guard !island.isShowingAlert else { return }
+        // Launch-flag previews are for screenshots, so they never turn the real camera on.
+        let forDocs = CommandLine.arguments.contains { $0.hasPrefix("--demo") }
         switch which {
         case "-tour":
-            // The whole life of an alert in ~12 s: drop out of the notch, tuck back in, Up next, live countdown.
+            // The whole life of an alert in ~16 s: drop out of the notch, camera check, on the call,
+            // Up next, live countdown.
             let m = Meeting.demo(startingIn: Double(settings.leadMinutes * 60))
             demo = m
             alerted.insert(m.id)
             present(m)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3.4) { [weak self] in
+            island.model.fakeCamera = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.8) { [weak self] in
                 guard let self, self.island.model.alert?.id == m.id else { return }
-                self.handle(.dismiss, for: m)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { self.runDemo("-list-short") }
+                self.island.setMirror(true)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                    guard self.island.model.alert?.id == m.id else { return }
+                    self.handle(.dismiss, for: m)
+                    self.island.model.fakeCamera = forDocs
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { self.runDemo("-onair-short") }
+                }
+            }
+        case "-onair", "-onair-short":
+            let short = which == "-onair-short"
+            let now = Date()
+            let m = Meeting.demo(startingIn: -25 * 60 - 30)
+            let mt = Meeting(id: m.id, title: m.title, start: m.start, end: now.addingTimeInterval(4 * 60 + 32), link: m.link,
+                             calendar: m.calendar, attendees: m.attendees, people: m.people)
+            let next = Meeting(id: "demo-next", title: "Sprint Planning", start: mt.end, end: mt.end.addingTimeInterval(3600),
+                               link: URL(string: "https://zoom.us/j/1"), calendar: "Preview", attendees: 9)
+            demoOnAir = (OnAir(meeting: mt, since: mt.start, mic: true, camera: true, next: next),
+                         now.addingTimeInterval(short ? 3.6 : 20))
+            updateOnAir()
+            if short {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.6) { [weak self] in
+                    self?.updateOnAir()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { self?.runDemo("-list-short") }
+                }
+            }
+        case "-mirror":
+            let m = Meeting.demo(startingIn: Double(settings.leadMinutes * 60))
+            demo = m
+            alerted.insert(m.id)
+            island.model.fakeCamera = forDocs
+            present(m)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+                guard self?.island.model.alert?.id == m.id else { return }
+                self?.island.setMirror(true)
             }
         case "-list-short":
             demoAgenda = Meeting.demoAgenda()
@@ -528,6 +636,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func setGlow(_ sender: NSMenuItem) {
         if let raw = sender.representedObject as? String, let g = Glow(rawValue: raw) { settings.glow = g }
         applyIslandSettings()
+    }
+
+    @objc private func setOnAirMode(_ sender: NSMenuItem) {
+        if let raw = sender.representedObject as? String { settings.onAir = raw }
+        updateOnAir()
     }
 
     @objc private func setScreen(_ sender: NSMenuItem) {

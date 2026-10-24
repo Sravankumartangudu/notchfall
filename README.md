@@ -9,7 +9,7 @@
 A tiny macOS menu-bar app. When a meeting is about to start, a black island grows out of the
 notch, springs open with a glowing rim and gives you a big **Join** button.
 
-<img src="docs/screenshots/tour.gif" width="820" alt="An alert drops out of the notch, tucks back in, the Up next list opens, then a live countdown sits beside the notch">
+<img src="docs/screenshots/tour.gif" width="820" alt="An alert drops out of the notch, opens a camera check, turns into the on-air indicator during the call, then the Up next list opens and a live countdown sits beside the notch">
 
 </div>
 
@@ -21,6 +21,8 @@ notch, springs open with a glowing rim and gives you a big **Join** button.
 |---|---|
 | **Drops out of the notch** | Alerts grow out of the camera housing, like the Dynamic Island on an iPhone. First a small bulge, then a spring with a little overshoot. The content blurs into place, then a ripple rings out. |
 | **Join in one click** | Finds the Google Meet, Zoom or Microsoft Teams link in the event and puts it on a big **Join** button. |
+| **🪞 Camera check** | One click on the alert opens a live, mirrored camera preview inside the island, so you can fix your hair before you **Join**. The camera only runs while it's open. |
+| **🎙 On air** | While you're on a call, a slim island shows a red mic light, a camera light and the time left in the meeting. In the last 5 minutes the rim starts to glow, and if another meeting starts straight after, it shows **Next: Sprint Planning at 15:00**. Works with every meeting app. |
 | **Live countdown** | In the minutes before a meeting, a ring and the minutes left sit either side of the notch. The rim starts to glow in the last minute. |
 | **Up next on hover** | Move the pointer onto the notch and the island opens into your next four items, each with its own join button. |
 | **Gets more urgent** | The rim's gradient turns faster as the start gets close and goes red once the meeting is live. The title shimmers, and the badge pulses. |
@@ -36,6 +38,14 @@ notch, springs open with a glowing rim and gives you a big **Join** button.
 <tr>
 <td align="center"><sub>2 minutes before: rolling countdown and a draining ring</sub></td>
 <td align="center"><sub>Live: red LIVE tag, full ring, shimmering title</sub></td>
+</tr>
+<tr>
+<td><img src="docs/screenshots/camera-check.jpg" alt="Camera check: a mirrored camera preview inside the island"></td>
+<td><img src="docs/screenshots/on-air.jpg" alt="On air: mic and camera lights, 5 minutes left and the next meeting"></td>
+</tr>
+<tr>
+<td align="center"><sub>🪞 Camera check before you join</sub></td>
+<td align="center"><sub>🎙 On air: mic and camera lights, time left, what's next</sub></td>
 </tr>
 <tr>
 <td><img src="docs/screenshots/reminder.jpg" alt="Reminder alert"></td>
@@ -55,7 +65,8 @@ notch, springs open with a glowing rim and gives you a big **Join** button.
 </tr>
 </table>
 
-<sub>The screenshots use made-up events (the app's built-in previews) on a mock desktop.</sub>
+<sub>The screenshots use made-up events (the app's built-in previews) on a mock desktop. The camera
+check shows a drawn stand-in, not a real camera.</sub>
 
 ---
 
@@ -117,6 +128,7 @@ makes `build/Notchfall.dmg` and `build/Notchfall.zip`.
 | Close an alert | **✕**, or **Done** when there's no link. |
 | See what's next | Hover the notch, or open the menu. |
 | Set a timer | Menu → **⏱ Quick timer** → a preset, or **New timer with a label…** |
+| Check your camera | Click 🪞 on a meeting alert. **Back** returns to the alert; **Join** joins. |
 | Try the animation | Menu → **✨ Preview an alert** → any item, or **Drop a test alert** (⌘T). |
 
 When alerts appear:
@@ -140,6 +152,7 @@ Everything is under **⚙ Settings** in the menu.
 | **Island → Alert drops** | 1, 2, 3, 5 or 10 min before |
 | **Island → Live countdown beside the notch** | Off, or from 5, 10, 15 or 30 min before (default 10) |
 | **Island → Open "Up next" when hovering the notch** | On / off |
+| **Island → On air indicator during calls** | Off; During calendar meetings (default); Whenever the mic or camera is on |
 | **Island → Glow colours** | Aurora, Neon, Ember, Ice, Mono |
 | **Island → Show on** | The built-in screen with the notch, or the main screen |
 | **Sound → Alert sound** | Off, Glass, Hero, Ping, Pop, Purr, Submarine, Tink |
@@ -155,6 +168,11 @@ Everything is under **⚙ Settings** in the menu.
 Notchfall reads your calendars, and reminders if you turn them on, **on your Mac only**. It has
 no server, no account, no analytics and no network access of its own. Clicking **Join** opens
 the meeting link in your browser or meeting app.
+
+- **Camera check** asks for camera access the first time you use it. The picture is only shown in
+  the island; it's never recorded or saved, and the camera turns off when you close it.
+- **On air** only checks *whether* a microphone or camera is in use (the same signal that lights
+  macOS's orange and green dots). It never hears or sees anything, and needs no permission.
 
 ---
 
@@ -176,6 +194,13 @@ the notch** is on. On other screens, use the menu.
 
 **The island shows on the wrong screen.**
 Settings → Island → **Show on**.
+
+**On air shows when I'm not on a call.**
+Some apps keep the microphone open in the background. Set **On air indicator during calls** to
+**During calendar meetings** (the default) so it only shows while a meeting is on.
+
+**Camera check says access is off.**
+System Settings → Privacy & Security → Camera, and turn Notchfall on.
 
 **I also use T-Minus.**
 Both apps would alert for the same meeting. Keep one running, or set one to **Only meetings
