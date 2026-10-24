@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// ⚡ Charging, 🎧 headphones connected, 🎤 mic muted, 📂 added to the shelf: a few seconds in the wings, then gone.
+/// ⚡ Charging, 🎧 headphones connected, 🎤 mic muted, 📂 added to the shelf, ⬇️ downloaded, 📋 copied:
+/// a few seconds in the wings, then gone.
 struct ToastContent: View {
     @ObservedObject var m: IslandModel
     let toast: Toast
@@ -44,6 +45,24 @@ struct ToastContent: View {
                     .foregroundStyle(rgb(1, 0.76, 0.32))
                     .symbolEffect(.bounce, value: on)
                     .reveal(on)
+            case .downloaded:
+                Image(systemName: "arrow.down.circle.fill")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(Self.green)
+                    .symbolEffect(.bounce, value: on)
+                    .reveal(on)
+            case .copied:
+                Image(systemName: "doc.on.clipboard.fill")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(rgb(0.55, 0.78, 1))
+                    .symbolEffect(.bounce, value: on)
+                    .reveal(on)
+            case .note(let symbol, _, let tint):
+                Image(systemName: symbol)
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(tint)
+                    .symbolEffect(.bounce, value: on)
+                    .reveal(on)
             }
         } right: {
             switch toast.kind {
@@ -76,6 +95,20 @@ struct ToastContent: View {
                     .font(.system(size: 12, weight: .semibold, design: .rounded))
                     .foregroundStyle(.white.opacity(0.9))
                     .reveal(on, 0.04)
+            case .downloaded(let name), .note(_, let name, _):
+                Text(name)
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.9))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .reveal(on, 0.04)
+            case .copied:
+                HStack(spacing: 4) {
+                    Text("Copied").foregroundStyle(.white.opacity(0.9))
+                    Text("⌘V").foregroundStyle(.white.opacity(0.45))
+                }
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .reveal(on, 0.04)
             }
         }
         .padding(.horizontal, inset)

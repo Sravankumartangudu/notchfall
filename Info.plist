@@ -15,15 +15,17 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.4.0</string>
+	<string>1.5.0</string>
 	<key>CFBundleVersion</key>
-	<string>5</string>
+	<string>6</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 	<key>LSUIElement</key>
 	<true/>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>Notchfall asks Music and Spotify what is playing so it can show the song beside the notch, and pauses it when a meeting alert drops. It only talks to them while they are already open.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>Notchfall shows the progress of downloads in ~/Downloads in the notch. It only looks at file names and sizes.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>Notchfall reads your calendar so it can drop an alert out of the notch before a meeting starts. Only a meeting address goes to Apple Maps, for travel times; nothing else leaves your Mac.</string>
 	<key>NSCalendarsUsageDescription</key>

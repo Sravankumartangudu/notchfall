@@ -13,7 +13,7 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" build/obj
 for arch in arm64 x86_64; do
   swiftc -O -swift-version 5 \
     -target "$arch-apple-macos14.0" \
-    Sources/*.swift \
+    Sources/*.swift Edition/*.swift \
     -o "build/obj/Notchfall-$arch"
 done
 lipo -create build/obj/Notchfall-arm64 build/obj/Notchfall-x86_64 -output "$APP/Contents/MacOS/Notchfall"

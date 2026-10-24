@@ -103,6 +103,49 @@ final class Settings {
         get { d.object(forKey: "shelf") as? Bool ?? true }
         set { d.set(newValue, forKey: "shelf") }
     }
+    /// 🔊 Volume and ☀️ brightness levels in the notch while they change.
+    var levelHUD: Bool {
+        get { d.object(forKey: "levelHUD") as? Bool ?? true }
+        set { d.set(newValue, forKey: "levelHUD") }
+    }
+    /// ⏳ Download progress from ~/Downloads in the wings.
+    var downloads: Bool {
+        get { d.object(forKey: "downloads") as? Bool ?? true }
+        set { d.set(newValue, forKey: "downloads") }
+    }
+    var downloadsToShelf: Bool {
+        get { d.object(forKey: "downloadsToShelf") as? Bool ?? false }
+        set { d.set(newValue, forKey: "downloadsToShelf") }
+    }
+    /// 📋 Remember the last 20 things copied (in memory only).
+    var clipboard: Bool {
+        get { d.object(forKey: "clipboard") as? Bool ?? false }
+        set { d.set(newValue, forKey: "clipboard") }
+    }
+    var clipHotkey: Bool {
+        get { d.object(forKey: "clipHotkey") as? Bool ?? true }
+        set { d.set(newValue, forKey: "clipHotkey") }
+    }
+    /// 🤖 Show Claude Code's "done" even while its terminal or editor is the frontmost app.
+    var claudeAlways: Bool {
+        get { d.object(forKey: "claudeAlways") as? Bool ?? false }
+        set { d.set(newValue, forKey: "claudeAlways") }
+    }
+    /// …and for headless runs (the Agent SDK, scripts), not just the ones you're working in.
+    var claudeHeadless: Bool {
+        get { d.object(forKey: "claudeHeadless") as? Bool ?? false }
+        set { d.set(newValue, forKey: "claudeHeadless") }
+    }
+    /// 🛰 An app in the fleet quit unexpectedly, stopped responding or reported an error.
+    var fleetAlerts: Bool {
+        get { d.object(forKey: "fleetAlerts") as? Bool ?? true }
+        set { d.set(newValue, forKey: "fleetAlerts") }
+    }
+    /// 📮 Notices dropped in ~/.notchfall/inbox by scripts.
+    var inbox: Bool {
+        get { d.object(forKey: "inbox") as? Bool ?? true }
+        set { d.set(newValue, forKey: "inbox") }
+    }
     /// "notch" (built-in notch screen, else the main screen) or "primary" (the screen with the menu bar).
     var screen: String {
         get { d.string(forKey: "screen") ?? "notch" }
@@ -159,9 +202,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let travel = Travel()
     private let shelf = Shelf()
     private var hotKey: HotKey?
+    private var clipHotKey: HotKey?
+    private let clipboard = Clipboard()
+    private let levels = LevelWatch()
+    private let downloads = Downloads()
+    private let fleet = FleetWatch(parent: Edition.fleetFile)
+    private var notices: [Notice] = []
+    private var noticeToken = 0
+    private var activities: [String: (Activity, Date)] = [:]
+    private var noticeGapUntil = Date.distantPast
+    private var levelToken = 0
+    private var clipsToken = 0
+    private var demoClips = false
+    private var claudeStops: [String: Date] = [:]   // session → when Claude last said it was done
+    private var rivalsWarned = Set<pid_t>()
     private var micMuted = false
     private var mutedByUs = false          // muted with ⌃⌥M or the menu (so we may unmute after the call)
-    private var forDocs: Bool { CommandLine.arguments.contains { $0.hasPrefix("--demo") } }
+    private(set) var forDocs: Bool = CommandLine.arguments.contains { $0.hasPrefix("--demo") }
 
     private static let sounds = ["Glass", "Hero", "Ping", "Pop", "Purr", "Submarine", "Tink"]
 
@@ -226,6 +283,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) { self.island.model.shelf = self.shelf.items }
         }
         travel.onChange = { [weak self] in self?.updateTravel(); self?.updateIsland() }
+        island.model.onNotice = { [weak self] n, main in self?.noticeTapped(n, main: main) }
+        island.model.onClip = { [weak self] c in self?.clipTapped(c) }
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.image = Self.menuIcon()
@@ -233,7 +292,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let menu = NSMenu()
         menu.delegate = self
         statusItem.menu = menu
-        NexusBeacon.start(name: "Notchfall") { [weak self] in
+        NexusBeacon.start(name: Edition.name) { [weak self] in
             guard let self else { return ("ok", "") }
             if self.accessDenied { return ("warn", "calendar access denied") }
             if let next = self.relevant.first(where: { $0.start > Date() }) {
@@ -271,11 +330,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             peripherals.start()
             micMuted = Mic.muted
             applyMuteHotkey()
+
+            levels.enabled = settings.levelHUD
+            levels.onChange = { [weak self] l in self?.showLevel(l) }
+            levels.start()
+            clipboard.enabled = settings.clipboard
+            clipboard.onChange = { [weak self] in
+                guard let self, !self.demoClips else { return }
+                self.island.model.clips = self.clipboard.clips
+            }
+            clipboard.start()
+            downloads.enabled = settings.downloads
+            downloads.onChange = { [weak self] items in self?.setActivity(Downloads.activity(items), id: "downloads") }
+            downloads.onFinished = { [weak self] url in self?.downloadFinished(url) }
+            downloads.start()
+            fleet.enabled = settings.fleetAlerts
+            fleet.onProblem = { [weak self] app in self?.post(FleetWatch.notice(app)) }
+            fleet.start()
+            Edition.setUp(self)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.checkRivals() }
         }
+        applyClipHotkey()
     }
 
     private func applyMuteHotkey() {
         hotKey = settings.muteHotkey ? HotKey.muteShortcut { [weak self] in self?.toggleMute() } : nil
+    }
+
+    private func applyClipHotkey() {
+        clipHotKey = settings.clipboard && settings.clipHotkey ? HotKey.clipboardShortcut { [weak self] in self?.toggleClips() } : nil
     }
 
     private func applyIslandSettings() {
@@ -297,6 +380,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func refresh() {
         meetings = cal.upcoming()
         lastRefresh = Date()
+        if !forDocs { checkRivals() }
         updateTravel()
         shelf.prune()
         if shelf.items != island.model.shelf, island.model.shelf != Shelf.demo { island.model.shelf = shelf.items }
@@ -318,6 +402,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         updateOnAir()
         resumeAfterCallIfDone()
         maybeBrief()
+        if !forDocs { drainInbox() }
+        expireActivities()
+        showNextNotice()
         // Wait while an alert is up or a dialog (e.g. "New timer…") is open.
         guard !island.isShowingAlert, NSApp.modalWindow == nil else { return }
 
@@ -605,7 +692,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        menu.addItem(sectionHeader("Notchfall · up next"))
+        menu.addItem(sectionHeader("\(Edition.name) · up next"))
 
         if accessDenied {
             menu.addItem(item("⚠ Calendar access denied — open Privacy settings", #selector(openPrivacy)))
@@ -646,7 +733,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                              ("Morning brief", "-brief"), ("Charging", "-charging"), ("Headphones connected", "-airpods"),
                              ("Focus session", "-focus"), ("Focus session done", "-focusdone"),
                              ("Time to leave", "-leave"), ("Leave-by countdown", "-leavepeek"), ("Mic muted", "-muted"),
-                             ("On a call, muted", "-onair-muted"), ("Drop zones (drag a file up)", "-drop"), ("Shelf", "-shelf")] {
+                             ("On a call, muted", "-onair-muted"), ("Drop zones (drag a file up)", "-drop"), ("Shelf", "-shelf"),
+                             ("Claude Code is done", "-claude"), ("Claude Code needs you", "-claude-needs"),
+                             ("Download progress", "-download"), ("Volume", "-volume"), ("Brightness", "-brightness"),
+                             ("Clipboard history", "-clips"), ("An app quit unexpectedly", "-fleet"),
+                             ("Notice from a script", "-notice")] + Edition.previews {
             let mi = item(label, #selector(previewFromMenu(_:)))
             mi.representedObject = arg
             preview.addItem(mi)
@@ -711,6 +802,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             muteItem.keyEquivalentModifierMask = [.control, .option]
         }
         menu.addItem(muteItem)
+
+        if settings.clipboard {
+            let clipMenu = NSMenu()
+            let open = item("Show in the notch", #selector(toggleClips))
+            if settings.clipHotkey {
+                open.keyEquivalent = "v"
+                open.keyEquivalentModifierMask = [.control, .option]
+            }
+            clipMenu.addItem(open)
+            if !clipboard.clips.isEmpty {
+                clipMenu.addItem(.separator())
+                clipMenu.addItem(disabled("Click to copy again"))
+                for c in clipboard.clips.prefix(10) {
+                    let mi = item(truncate(c.title, 44), #selector(copyClipFromMenu(_:)))
+                    mi.representedObject = c.id
+                    clipMenu.addItem(mi)
+                }
+                clipMenu.addItem(.separator())
+                clipMenu.addItem(item("Clear the history", #selector(clearClips)))
+            }
+            menu.addItem(submenu(clipboard.clips.isEmpty ? "📋 Clipboard" : "📋 Clipboard (\(clipboard.clips.count))", clipMenu))
+        }
+        Edition.addMenuItems(to: menu, self)
 
         // All preferences live under one Settings submenu, grouped by what they affect.
         let prefs = NSMenu()
@@ -809,6 +923,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         prefs.addItem(toggle("Unmute when the call ends", settings.unmuteAfterCall, #selector(toggleUnmuteAfterCall)))
 
         prefs.addItem(.separator())
+        prefs.addItem(sectionHeader("Notch extras"))
+        prefs.addItem(toggle("Volume and brightness levels", settings.levelHUD, #selector(toggleLevelHUD)))
+        prefs.addItem(toggle("Download progress (from ~/Downloads)", settings.downloads, #selector(toggleDownloads)))
+        prefs.addItem(toggle("Put finished downloads on the shelf", settings.downloadsToShelf, #selector(toggleDownloadsToShelf)))
+        prefs.addItem(toggle("Clipboard history (last \(Clipboard.limit), in memory only)…", settings.clipboard, #selector(toggleClipboard)))
+        if settings.clipboard {
+            if Clipboard.denied {
+                prefs.addItem(disabled("  ⚠️ Clipboard access is off in Privacy & Security → Paste from Other Apps"))
+            }
+            prefs.addItem(toggle("⌃⌥V opens the clipboard history", settings.clipHotkey, #selector(toggleClipHotkey)))
+        }
+        prefs.addItem(toggle("Tell me when an app in the \(Edition.fleetName) fleet stops", settings.fleetAlerts, #selector(toggleFleetAlerts)))
+        prefs.addItem(toggle("Notices from scripts (~/.notchfall/inbox)", settings.inbox, #selector(toggleInbox)))
+
+        prefs.addItem(.separator())
+        prefs.addItem(sectionHeader("Claude Code"))
+        let hooks = toggle("Tell me when Claude finishes or needs me", ClaudeHooks.installed, #selector(toggleClaudeHooks))
+        if !ClaudeHooks.claudeInstalled { hooks.isEnabled = false; hooks.action = nil }
+        prefs.addItem(hooks)
+        prefs.addItem(toggle("…even while I'm looking at its window", settings.claudeAlways, #selector(toggleClaudeAlways)))
+        prefs.addItem(toggle("…and for headless runs (Agent SDK, scripts)", settings.claudeHeadless, #selector(toggleClaudeHeadless)))
+        Edition.addSettings(to: prefs, self)
+
+        prefs.addItem(.separator())
         prefs.addItem(sectionHeader("App"))
         let appearanceMenu = NSMenu()
         for (raw, label) in [("system", "System"), ("light", "Light"), ("dark", "Dark")] {
@@ -823,7 +961,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.addItem(.separator())
         menu.addItem(item("Refresh calendars", #selector(manualRefresh), key: "r"))
-        menu.addItem(item("Quit Notchfall", #selector(NSApplication.terminate(_:)), key: "q"))
+        menu.addItem(item("Quit \(Edition.name)", #selector(NSApplication.terminate(_:)), key: "q"))
     }
 
     private func item(_ title: String, _ action: Selector?, key: String = "") -> NSMenuItem {
@@ -838,7 +976,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return mi
     }
 
-    private func sectionHeader(_ title: String) -> NSMenuItem {
+    func sectionHeader(_ title: String) -> NSMenuItem {
         let mi = NSMenuItem(title: title.uppercased(), action: nil, keyEquivalent: "")
         mi.attributedTitle = NSAttributedString(string: title.uppercased(), attributes: [
             .font: NSFont.systemFont(ofSize: 10, weight: .semibold),
@@ -1022,6 +1160,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self?.demoAgenda = nil
                 self?.updateIsland()
             }
+        case "-claude":
+            post(Notice(source: "Claude Code", symbol: "checkmark.seal.fill", tint: Self.claudeTint, title: "Claude is done · photo-sorter",
+                        detail: "All 42 tests pass and the release notes are updated.", action: "Show"))
+        case "-claude-needs":
+            post(Notice(source: "Claude Code", symbol: "hand.raised.fill", tint: Self.claudeTint, title: "Claude needs you · photo-sorter",
+                        detail: "Claude needs your permission to use Bash", action: "Show", sticky: forDocs))
+        case "-download":
+            if forDocs {
+                setActivity(Activity(id: "downloads", symbol: "arrow.down", tint: rgb(0.36, 0.7, 1), label: "2 files · 42%", progress: 0.42), id: "downloads")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak self] in self?.setActivity(nil, id: "downloads") }
+            } else {
+                for step in 0...20 {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + Double(step) * 0.3) { [weak self] in
+                        let p = Double(step) / 20
+                        self?.setActivity(step == 20 ? nil : Activity(id: "downloads", symbol: "arrow.down", tint: rgb(0.36, 0.7, 1),
+                                                                      label: "\(Int(p * 100))%", progress: p), id: "downloads")
+                        if step == 20 { self?.showToast(.downloaded("Holiday photos.zip"), force: true) }
+                    }
+                }
+            }
+        case "-downloaded":
+            showToast(.downloaded("Holiday photos.zip"), force: true)
+        case "-volume", "-brightness":
+            let kind: Level.Kind = which == "-volume" ? .volume : .brightness
+            let steps: [Double] = forDocs ? [0.62] : [0.38, 0.44, 0.5, 0.56, 0.62, 0.69, 0.75]
+            for (i, v) in steps.enumerated() {
+                DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) * 0.18) { [weak self] in
+                    self?.showLevel(Level(kind: kind, value: v), hold: self?.forDocs == true ? 20 : 1.6)
+                }
+            }
+        case "-clips":
+            demoClips = true
+            if island.clipsOpen { closeClips() }
+            demoClips = true
+            toggleClips()
+        case "-fleet":
+            post(FleetWatch.notice(.init(id: "com.example.photosorter", name: "Photo Sorter", status: "crashed",
+                                         detail: "It stopped 1 min ago. Its last words: “database is locked”")))
+        case "-notice":
+            post(Notice(source: "backup.sh", symbol: "externaldrive.fill.badge.checkmark", tint: rgb(0.3, 0.9, 0.48),
+                        title: "Backup finished", detail: "4,128 files · 2.3 GB copied to the travel drive"))
+        case _ where Edition.previews.contains { $0.1 == which }:
+            _ = Edition.preview(which, self)
         default:
             let kind: Meeting.Kind = which == "-reminder" ? .reminder : which == "-timer" ? .timer : .meeting
             let live = which == "-live" || kind != .meeting
@@ -1079,7 +1260,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         island.resolve()
     }
 
-    private func showToast(_ kind: Toast.Kind, force: Bool = false) {
+    func showToast(_ kind: Toast.Kind, force: Bool = false) {
         guard force || settings.toasts else { return }
         // Bluetooth reconnects in bursts; one toast per device (or charger plug-in) a minute is plenty.
         if !force, let (k, at) = lastToast, k == kind || { if case .charging = k, case .charging = kind { return true }; return false }(),
@@ -1093,6 +1274,226 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let self, self.island.model.toast?.id == t.id else { return }
             self.island.model.toast = nil
             self.island.resolve()
+        }
+    }
+
+    // MARK: - Notices, activities, levels and the clipboard
+
+    /// Queues a notice card. One shows at a time, with a short gap between them, and none cover an alert.
+    func post(_ n: Notice) {
+        // The same card again (Claude done after asking, say) replaces the one on screen.
+        if var cur = island.model.notice, cur.id == n.id {
+            cur = n
+            cur.shown = Date()
+            noticeToken += 1
+            let token = noticeToken
+            island.model.notice = cur
+            if !cur.sticky {
+                DispatchQueue.main.asyncAfter(deadline: .now() + Notice.lifetime) { [weak self] in self?.closeNotice(token: token) }
+            }
+            return
+        }
+        if let i = notices.firstIndex(where: { $0.id == n.id }) { notices[i] = n } else { notices.append(n) }
+        showNextNotice()
+    }
+
+    private func showNextNotice() {
+        guard island.model.notice == nil, !notices.isEmpty, !island.isShowingAlert, Date() >= noticeGapUntil else { return }
+        var n = notices.removeFirst()
+        n.shown = Date()
+        noticeToken += 1
+        let token = noticeToken
+        island.model.notice = n
+        island.resolve()
+        if !n.sticky {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Notice.lifetime) { [weak self] in self?.closeNotice(token: token) }
+        }
+    }
+
+    /// Closes the notice. Like the brief, the timed close waits while the pointer is on it.
+    private func closeNotice(token: Int? = nil) {
+        guard island.model.notice != nil, token == nil || token == noticeToken else { return }
+        if token != nil, island.hovering {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.closeNotice(token: token) }
+            return
+        }
+        noticeToken += 1
+        island.model.notice = nil
+        island.resolve()
+        noticeGapUntil = Date().addingTimeInterval(0.5)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) { [weak self] in self?.showNextNotice() }
+    }
+
+    private func noticeTapped(_ n: Notice, main: Bool) {
+        closeNotice()
+        guard main, let p = n.perform else { return }
+        switch p {
+        case .open(let url): NSWorkspace.shared.open(url)
+        case .reveal(let url): NSWorkspace.shared.activateFileViewerSelecting([url])
+        case .quit(let id): NSRunningApplication.runningApplications(withBundleIdentifier: id).forEach { $0.terminate() }
+        case .named(let name): Edition.perform(name, self)
+        }
+    }
+
+    /// Something running in the wings (a download, a script's progress). The latest one to change shows.
+    private func setActivity(_ a: Activity?, id: String) {
+        if let a { activities[id] = (a, Date()) } else { activities[id] = nil }
+        let top = activities.values.max { $0.1 < $1.1 }?.0
+        guard top != island.model.activity else { return }
+        island.model.activity = top
+        island.resolve()
+    }
+
+    /// A script that never said it was done shouldn't hang in the wings for ever.
+    private func expireActivities() {
+        for (id, (_, at)) in activities where id != "downloads" && Date().timeIntervalSince(at) > 600 { setActivity(nil, id: id) }
+    }
+
+    private func showLevel(_ l: Level, hold: Double = 1.6) {
+        guard !island.isShowingAlert else { return }
+        levelToken += 1
+        let token = levelToken
+        island.model.level = l
+        island.resolve()
+        DispatchQueue.main.asyncAfter(deadline: .now() + hold) { [weak self] in
+            guard let self, self.levelToken == token else { return }
+            self.island.model.level = nil
+            self.island.resolve()
+        }
+    }
+
+    private func downloadFinished(_ url: URL) {
+        showToast(.downloaded(url.lastPathComponent), force: true)
+        guard settings.downloadsToShelf, settings.shelf else { return }
+        shelf.add([url])
+        island.model.shelf = shelf.items
+    }
+
+    @objc private func toggleClips() {
+        if island.clipsOpen { closeClips(); return }
+        guard !island.isShowingAlert else { return }
+        island.model.clips = demoClips ? Clipboard.demo() : clipboard.clips
+        island.clipsOpen = true
+        island.resolve()
+        clipsToken += 1
+        let token = clipsToken
+        DispatchQueue.main.asyncAfter(deadline: .now() + (forDocs ? 20 : 10)) { [weak self] in self?.closeClips(token: token) }
+    }
+
+    private func closeClips(token: Int? = nil) {
+        guard island.clipsOpen, token == nil || token == clipsToken else { return }
+        if token != nil, island.hovering {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.closeClips(token: token) }
+            return
+        }
+        clipsToken += 1
+        island.clipsOpen = false
+        island.resolve()
+        if demoClips { demoClips = false; island.model.clips = clipboard.clips }
+    }
+
+    private func clipTapped(_ c: Clip) {
+        if !demoClips { clipboard.copy(c) }
+        closeClips()
+        showToast(.copied, force: true)
+    }
+
+    @objc private func copyClipFromMenu(_ sender: NSMenuItem) {
+        guard let clip = clipboard.clips.first(where: { $0.id == sender.representedObject as? UUID }) else { return }
+        clipboard.copy(clip)
+        showToast(.copied, force: true)
+    }
+
+    @objc private func clearClips() {
+        clipboard.clear()
+        island.model.clips = []
+    }
+
+    /// Two copies of the notch app (say, this one and another edition) would draw two islands on top of
+    /// each other, so say so once and offer to quit the other one.
+    private func checkRivals() {
+        let me = Bundle.main.bundleIdentifier ?? ""
+        for app in NSWorkspace.shared.runningApplications {
+            guard let id = app.bundleIdentifier, id.hasPrefix("com.stangudu.notchfall"), id != me,
+                  !app.isTerminated, !rivalsWarned.contains(app.processIdentifier) else { continue }
+            rivalsWarned.insert(app.processIdentifier)
+            let name = app.localizedName ?? "Another Notchfall"
+            post(Notice(source: Edition.name, symbol: "rectangle.on.rectangle", tint: rgb(1, 0.72, 0.3),
+                        title: "\(name) is using the notch too",
+                        detail: "Two islands would draw on top of each other. Keep one of them running.",
+                        perform: .quit(bundleId: id), action: "Quit \(name)", sticky: true))
+        }
+    }
+
+    // MARK: - The inbox (scripts and Claude Code)
+
+    private func drainInbox() {
+        for d in Inbox.drain() {
+            if d["source"] as? String == "claude" { claudeNotice(d); continue }
+            guard settings.inbox else { continue }
+            inboxItem(d)
+        }
+    }
+
+    /// One JSON file from a script: a notice card, a toast ("style": "toast"), or progress in the wings
+    /// ("id" plus "progress" 0…1, then "done": true).
+    private func inboxItem(_ d: [String: Any]) {
+        let title = d["title"] as? String ?? ""
+        let detail = d["detail"] as? String ?? d["message"] as? String ?? ""
+        let symbol = d["symbol"] as? String
+        let tint = Inbox.color(d["tint"] as? String ?? d["color"] as? String)
+        if let id = d["id"] as? String, d["progress"] != nil || d["done"] != nil {
+            if d["done"] as? Bool == true {
+                setActivity(nil, id: "inbox-\(id)")
+                if !title.isEmpty { showToast(.note(symbol: symbol ?? "checkmark.circle.fill", text: title, tint: tint ?? rgb(0.3, 0.9, 0.48)), force: true) }
+            } else {
+                let p = ((d["progress"] as? NSNumber)?.doubleValue).map { min(1, max(0, $0)) }
+                let label = d["label"] as? String ?? (p.map { "\(Int($0 * 100))%" } ?? title)
+                setActivity(Activity(id: "inbox-\(id)", symbol: symbol ?? "gearshape.fill", tint: tint ?? rgb(0.36, 0.7, 1),
+                                     label: label, progress: p), id: "inbox-\(id)")
+            }
+            return
+        }
+        guard !title.isEmpty else { return }
+        if d["style"] as? String == "toast" {
+            showToast(.note(symbol: symbol ?? "bell.fill", text: title, tint: tint ?? .white), force: true)
+            return
+        }
+        let url = (d["url"] as? String).flatMap { s in s.hasPrefix("/") || s.hasPrefix("~") ? URL(fileURLWithPath: (s as NSString).expandingTildeInPath) : URL(string: s) }
+        var n = Notice(source: d["from"] as? String ?? d["app"] as? String ?? "Script", symbol: symbol ?? "bell.badge.fill",
+                       tint: tint ?? rgb(0.36, 0.7, 1), title: title, detail: detail, perform: url.map { .open($0) },
+                       action: d["action"] as? String, sticky: d["sticky"] as? Bool ?? false)
+        if let id = d["id"] as? String { n.id = "inbox-\(id)" }
+        post(n)
+    }
+
+    private static let claudeTint = rgb(0.87, 0.5, 0.36)
+
+    /// Claude Code's Stop ("done") and Notification ("needs you") hooks.
+    private func claudeNotice(_ d: [String: Any]) {
+        guard ClaudeHooks.installed else { return }
+        let hook = d["hook"] as? [String: Any] ?? [:]
+        let entry = d["entry"] as? String ?? "", term = d["term"] as? String ?? ""
+        if entry.hasPrefix("sdk"), !settings.claudeHeadless { return }
+        if !settings.claudeAlways, let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
+           ClaudeHooks.lookingAt.contains(front) { return }
+        let session = hook["session_id"] as? String ?? ""
+        let folder = (hook["cwd"] as? String).map { ($0 as NSString).lastPathComponent } ?? ""
+        let place = folder.isEmpty ? "" : " · \(folder)"
+        let app = ClaudeHooks.app(term: term, entry: entry)
+        if hook["hook_event_name"] as? String == "Notification" {
+            let message = hook["message"] as? String ?? "Claude Code is waiting for you"
+            // The "waiting for your input" nudge a minute after Claude finished says nothing new.
+            if message.localizedCaseInsensitiveContains("waiting for your input"),
+               let done = claudeStops[session], Date().timeIntervalSince(done) < 600 { return }
+            post(Notice(id: "claude-\(session)", source: "Claude Code", symbol: "hand.raised.fill", tint: Self.claudeTint,
+                        title: "Claude needs you\(place)", detail: message, perform: app.map { .open($0) },
+                        action: app == nil ? nil : "Show", sticky: message.localizedCaseInsensitiveContains("permission")))
+        } else {
+            claudeStops[session] = Date()
+            post(Notice(id: "claude-\(session)", source: "Claude Code", symbol: "checkmark.seal.fill", tint: Self.claudeTint,
+                        title: "Claude is done\(place)", detail: ClaudeHooks.lastReply(hook["transcript_path"] as? String) ?? "",
+                        perform: app.map { .open($0) }, action: app == nil ? nil : "Show"))
         }
     }
 
@@ -1148,6 +1549,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func toggleToasts() { settings.toasts.toggle() }
     @objc private func toggleShelf() { settings.shelf.toggle(); applyIslandSettings() }
     @objc private func toggleMuteHotkey() { settings.muteHotkey.toggle(); applyMuteHotkey() }
+    @objc private func toggleLevelHUD() { settings.levelHUD.toggle(); levels.enabled = settings.levelHUD }
+    @objc private func toggleDownloads() { settings.downloads.toggle(); downloads.enabled = settings.downloads }
+    @objc private func toggleDownloadsToShelf() { settings.downloadsToShelf.toggle() }
+    @objc private func toggleClipboard() {
+        if !settings.clipboard, Clipboard.denied || Clipboard.asks {
+            let a = NSAlert()
+            a.messageText = "Allow Notchfall to see what you copy?"
+            a.informativeText = Clipboard.denied
+                ? "Clipboard access for Notchfall is set to Don't Allow. Change it in System Settings → Privacy & Security → Paste from Other Apps, then turn this on again."
+                : "macOS asks before an app reads the clipboard by itself. When it asks about Notchfall, choose Allow, or set it to Always Allow in System Settings → Privacy & Security → Paste from Other Apps, so it doesn't ask after every copy.\n\nThe history stays in memory only, and password managers' items are skipped."
+            a.addButton(withTitle: Clipboard.denied ? "OK" : "Turn On")
+            if !Clipboard.denied { a.addButton(withTitle: "Cancel") }
+            NSApp.activate(ignoringOtherApps: true)
+            guard a.runModal() == .alertFirstButtonReturn, !Clipboard.denied else { return }
+        }
+        settings.clipboard.toggle()
+        clipboard.enabled = settings.clipboard
+        if !settings.clipboard { clearClips() }
+        applyClipHotkey()
+    }
+    @objc private func toggleClipHotkey() { settings.clipHotkey.toggle(); applyClipHotkey() }
+    @objc private func toggleFleetAlerts() { settings.fleetAlerts.toggle(); fleet.enabled = settings.fleetAlerts }
+    @objc private func toggleInbox() { settings.inbox.toggle() }
+    @objc private func toggleClaudeAlways() { settings.claudeAlways.toggle() }
+    @objc private func toggleClaudeHeadless() { settings.claudeHeadless.toggle() }
+    /// Adds or removes the two hooks in ~/.claude/settings.json (backed up first). Only ever from this click.
+    @objc private func toggleClaudeHooks() {
+        let on = !ClaudeHooks.installed
+        if ClaudeHooks.set(on) {
+            showToast(.note(symbol: on ? "checkmark.circle.fill" : "minus.circle.fill",
+                            text: on ? "Claude Code hooks added" : "Claude Code hooks removed", tint: Self.claudeTint), force: true)
+        } else {
+            let a = NSAlert()
+            a.messageText = "Couldn't update Claude Code's settings"
+            a.informativeText = "\(ClaudeHooks.settingsFile.path) couldn't be read or written, so nothing was changed."
+            NSApp.activate(ignoringOtherApps: true)
+            a.runModal()
+        }
+    }
     @objc private func toggleMuteReminder() { settings.muteReminder.toggle() }
     @objc private func toggleUnmuteAfterCall() { settings.unmuteAfterCall.toggle() }
 

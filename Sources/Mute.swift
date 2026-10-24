@@ -70,21 +70,28 @@ enum Mic {
 final class HotKey {
     private var ref: EventHotKeyRef?
     private var handler: EventHandlerRef?
+    private let id: UInt32
     private let action: () -> Void
 
-    init?(keyCode: Int, modifiers: Int, action: @escaping () -> Void) {
+    init?(keyCode: Int, modifiers: Int, id: UInt32, action: @escaping () -> Void) {
+        self.id = id
         self.action = action
         var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
         let me = Unmanaged.passUnretained(self).toOpaque()
-        guard InstallEventHandler(GetApplicationEventTarget(), { _, _, ctx in
-            guard let ctx else { return noErr }
+        guard InstallEventHandler(GetApplicationEventTarget(), { _, event, ctx in
+            guard let ctx, let event else { return OSStatus(eventNotHandledErr) }
             let hk = Unmanaged<HotKey>.fromOpaque(ctx).takeUnretainedValue()
+            // Every hot key of the app comes through every handler: only take our own, pass the rest on.
+            var pressed = EventHotKeyID()
+            guard GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID), nil,
+                                    MemoryLayout<EventHotKeyID>.size, nil, &pressed) == noErr,
+                  pressed.signature == HotKey.signature, pressed.id == hk.id else { return OSStatus(eventNotHandledErr) }
             DispatchQueue.main.async { hk.action() }
             return noErr
         }, 1, &spec, me, &handler) == noErr else { return nil }
-        let id = EventHotKeyID(signature: OSType(0x4E66_4D75), id: 1)   // "NfMu"
-        guard RegisterEventHotKey(UInt32(keyCode), UInt32(modifiers), id, GetApplicationEventTarget(), 0, &ref) == noErr else {
-            if let handler { RemoveEventHandler(handler) }
+        let hid = EventHotKeyID(signature: Self.signature, id: id)
+        guard RegisterEventHotKey(UInt32(keyCode), UInt32(modifiers), hid, GetApplicationEventTarget(), 0, &ref) == noErr else {
+            if let h = handler { RemoveEventHandler(h); handler = nil }   // deinit still runs
             return nil
         }
     }
@@ -94,8 +101,15 @@ final class HotKey {
         if let handler { RemoveEventHandler(handler) }
     }
 
+    private static let signature = OSType(0x4E66_4D75)   // "NfMu"
+
     /// ⌃⌥M
     static func muteShortcut(_ action: @escaping () -> Void) -> HotKey? {
-        HotKey(keyCode: kVK_ANSI_M, modifiers: controlKey | optionKey, action: action)
+        HotKey(keyCode: kVK_ANSI_M, modifiers: controlKey | optionKey, id: 1, action: action)
+    }
+
+    /// ⌃⌥V
+    static func clipboardShortcut(_ action: @escaping () -> Void) -> HotKey? {
+        HotKey(keyCode: kVK_ANSI_V, modifiers: controlKey | optionKey, id: 2, action: action)
     }
 }

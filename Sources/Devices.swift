@@ -54,7 +54,7 @@ enum Devices {
     }
 
     /// Always-listening voice assistants keep a mic open all day without anyone being on a call.
-    /// (com.stangudu.* covers Nexus, Citadel and Jarvis, which listen for a wake word.)
+    /// (com.stangudu.* covers the author's own apps, some of which listen for a wake word.)
     private static func ignored(_ bundle: String) -> Bool {
         ["com.apple.corespeechd", "com.apple.assistantd", "com.apple.Siri", "com.apple.SpeechRecognitionCore",
          "com.apple.accessibility.heard", "com.stangudu."].contains { bundle.hasPrefix($0) }

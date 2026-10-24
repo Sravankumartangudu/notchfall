@@ -1,5 +1,37 @@
 # Changelog
 
+## 1.5.0 (2026-10-24)
+
+More than meetings: the island now shows the things you'd otherwise look away for.
+
+- **🔊 Volume and ☀️ brightness.** Change either and a slim level bar shows in the wings, with a
+  struck-through speaker when muted. Settings → Notch extras → **Volume and brightness levels**.
+- **⏳ Downloads.** Downloads into ~/Downloads from Safari, Chrome, Edge, Brave, Arc or Firefox
+  fill a ring beside the notch with the percent (Safari's own progress numbers, or the size so far
+  for other browsers); when done, *Downloaded …*, and (opt-in) onto the shelf. Only file names and
+  sizes are looked at; a download that stalls for 90 seconds stops spinning.
+- **📋 Clipboard history** (opt-in: Settings → Notch extras). **⌃⌥V** opens the last 20 things you copied (text, links, images,
+  files) under the notch; click one to copy it again. Also menu → **📋 Clipboard**. In memory
+  only; password-manager items are never kept. macOS 15.4+ asks before an app reads the clipboard,
+  so turning it on explains how to allow it (*Always Allow*) and points to the setting if it's off.
+- **🤖 Claude Code.** Settings → Claude Code → **Tell me when Claude finishes or needs me** adds two
+  hooks to ~/.claude/settings.json (the original is backed up the first time; click again to remove just Notchfall's two). *Claude is done* shows
+  the folder and the first line of its reply; *Claude needs you* shows what it's asking; **Show**
+  brings the terminal or editor forward. Quiet while you're already looking at it, and for
+  headless runs, unless you say otherwise.
+- **🛰 Fleet alerts.** With Nexus 1.11 or later, an app in the fleet that quits unexpectedly, stops
+  responding or reports an error drops out of the notch, with **Relaunch**.
+- **⚖️ Dharalu.** A buy / hold / sell change for wheat or a metal shows with the latest price and
+  **Open Dharalu**.
+- **📮 Post to the notch.** Scripts can drop JSON files into ~/.notchfall/inbox for a card, a toast
+  or a progress ring. See the README.
+- Cards queue one at a time, wait for alerts, close after 9 seconds unless you're pointing at them,
+  and stay up when they need you.
+- If another copy of Notchfall is drawing on the notch, it says so and offers to quit it.
+- **✨ Preview an alert** gains Claude Code is done / needs you, Download progress, Volume,
+  Brightness, Clipboard history, An app quit unexpectedly, Notice from a script and Dharalu signal
+  change.
+
 ## 1.4.0 (2026-10-24)
 
 - **🚗 Time to leave.** Meetings at a real address (not a video link) get a *Time to leave* alert

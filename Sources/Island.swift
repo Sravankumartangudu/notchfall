@@ -5,7 +5,10 @@ enum OverlayAction { case join, snooze, dismiss, next }
 
 /// A little notice that pops out of the notch for a few seconds.
 struct Toast: Equatable {
-    enum Kind: Equatable { case charging(Int), headphones(String), mic(muted: Bool), stillMuted, shelf(Int) }
+    enum Kind: Equatable {
+        case charging(Int), headphones(String), mic(muted: Bool), stillMuted, shelf(Int)
+        case downloaded(String), copied, note(symbol: String, text: String, tint: Color)
+    }
     let kind: Kind
     let id = UUID()
 }
@@ -29,7 +32,7 @@ struct OnAir: Equatable {
 
 /// Everything the island draws. The controller decides *what* to show; this model owns *how* it moves.
 final class IslandModel: ObservableObject {
-    enum Mode { case idle, bulge, peek, list, alert, mirror, onAir, music, toast, focus, brief, drop }
+    enum Mode { case idle, bulge, peek, list, alert, mirror, onAir, music, toast, focus, brief, drop, notice, activity, hud, clips }
 
     @Published private(set) var mode: Mode = .idle
     @Published private(set) var visible = false
@@ -48,6 +51,10 @@ final class IslandModel: ObservableObject {
     @Published var brief: Brief?
     @Published var focus: Meeting?     // the running focus or break stretch
     @Published var shelf: [URL] = []
+    @Published var notice: Notice?
+    @Published var activity: Activity?
+    @Published var level: Level?
+    @Published var clips: [Clip] = []
     @Published var demoDropTarget: String?   // previews: light up a drop zone without a real drag
     var draggingOut = false                  // a file is being dragged *off* the shelf
 
@@ -64,6 +71,8 @@ final class IslandModel: ObservableObject {
     var onOpenCalendar: () -> Void = {}
     var onShelfDrop: ([URL]) -> Void = { _ in }
     var onShelfRemove: (URL?) -> Void = { _ in }   // nil = clear the shelf
+    var onNotice: (Notice, Bool) -> Void = { _, _ in } // true = its main button, false = dismissed
+    var onClip: (Clip) -> Void = { _ in }
     let camera = CameraCheck()
 
     private var seq = 0
@@ -94,13 +103,22 @@ final class IslandModel: ObservableObject {
         case .toast:
             switch toast?.kind {
             case .headphones: return Metrics(width: w + 2 * 112, height: h, top: 6, bottom: 12)
-            case .stillMuted, .shelf: return Metrics(width: w + 2 * 104, height: h, top: 6, bottom: 12)
+            case .stillMuted, .shelf, .copied: return Metrics(width: w + 2 * 104, height: h, top: 6, bottom: 12)
+            case .downloaded, .note: return Metrics(width: w + 2 * 124, height: h, top: 6, bottom: 12)
             default: break
             }
             return Metrics(width: w + 2 * 92, height: h, top: 6, bottom: 12)
         case .focus: return Metrics(width: w + 2 * 78, height: h, top: 6, bottom: 12)
         case .brief: return Metrics(width: max(560, w + 2 * 182), height: h + 166, top: 18, bottom: 38)
         case .drop: return Metrics(width: max(520, w + 2 * 165), height: h + 10 + 76 + 16, top: 16, bottom: 32)
+        case .notice:
+            let long = (notice?.detail.count ?? 0) > 70 || (notice?.title.count ?? 0) > 44
+            return Metrics(width: max(540, w + 2 * 172), height: h + 118 + (long ? 16 : 0), top: 18, bottom: 38)
+        case .activity: return Metrics(width: w + 2 * 96, height: h, top: 6, bottom: 12)
+        case .hud: return Metrics(width: w + 2 * 100, height: h, top: 6, bottom: 12)
+        case .clips:
+            let rows = clips.isEmpty ? 1.5 : Double(min(ClipsContent.rows, clips.count))
+            return Metrics(width: max(500, w + 2 * 160), height: h + 8 + CGFloat(rows) * (ClipsContent.rowHeight + 2) + 18, top: 16, bottom: 32)
         }
     }
 
@@ -115,7 +133,7 @@ final class IslandModel: ObservableObject {
 
     /// Big cards get a faint inner rim and a drop shadow; the slim wings states don't.
     var isCard: Bool { Self.big.contains(mode) }
-    static let big: Set<Mode> = [.alert, .list, .mirror, .brief, .drop]
+    static let big: Set<Mode> = [.alert, .list, .mirror, .brief, .drop, .notice, .clips]
 
     var frameSize: CGSize {
         let m = metrics(mode)
@@ -185,6 +203,12 @@ struct IslandView: View {
                     .frame(width: size.width, height: size.height)
                     .opacity(0.55)
                     .transition(.opacity.animation(.easeInOut(duration: 0.6)))
+            } else if let n = m.notice, m.mode == .notice {
+                // The rim takes the colour of whatever is asking for attention.
+                GlowRim(shape: shape, colors: [n.tint, n.tint.opacity(0.55), .white.opacity(0.5), n.tint.opacity(0.8)], urgency: n.sticky ? 0.4 : 0)
+                    .frame(width: size.width, height: size.height)
+                    .opacity(0.55)
+                    .transition(.opacity.animation(.easeInOut(duration: 0.5)))
             } else if let p = m.peek, m.mode == .peek, urgency(p, lead: 60) > 0 {
                 GlowRim(shape: shape, colors: m.glow.colors, urgency: urgency(p, lead: 60))
                     .frame(width: size.width, height: size.height)
@@ -238,6 +262,13 @@ struct IslandView: View {
         case .brief:
             if let b = m.brief { BriefContent(m: m, brief: b, inset: met.top + 20) }
         case .drop: DropContent(m: m, inset: met.top + 16)
+        case .notice:
+            if let n = m.notice { NoticeContent(m: m, notice: n, inset: met.top + 20) }
+        case .activity:
+            if let a = m.activity { ActivityContent(m: m, activity: a, inset: met.top + 10) }
+        case .hud:
+            if let l = m.level { LevelContent(m: m, level: l, inset: met.top + 10) }
+        case .clips: ClipsContent(m: m, inset: met.top + 16)
         case .idle, .bulge: EmptyView()
         }
     }
@@ -673,6 +704,8 @@ final class IslandController {
     }
 
     private var listPreview = false
+    /// The clipboard history, opened with ⌃⌥V.
+    var clipsOpen = false
 
     /// Opens "Up next" as if hovered, for the preview menu and screenshots.
     func showListPreview(for seconds: Double, done: @escaping () -> Void) {
@@ -703,11 +736,15 @@ final class IslandController {
     func resolve() {
         if model.alert != nil { model.morph(to: mirrorOpen ? .mirror : .alert) }
         else if dropping || demoDrop { model.morph(to: .drop) }
+        else if clipsOpen { model.morph(to: .clips) }
+        else if model.notice != nil { model.morph(to: .notice) }
         else if model.brief != nil { model.morph(to: .brief) }
         else if hovering || listPreview { model.morph(to: .list) }
+        else if model.level != nil { model.morph(to: .hud) }
         else if model.toast != nil { model.morph(to: .toast) }
         else if model.onAir != nil { model.morph(to: .onAir) }
         else if peekEnabled, model.peek != nil { model.morph(to: .peek) }
+        else if model.activity != nil { model.morph(to: .activity) }
         else if model.focus != nil { model.morph(to: .focus) }
         else if model.track?.playing == true { model.morph(to: .music) }
         else { model.morph(to: .idle) }
